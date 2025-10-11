@@ -297,7 +297,7 @@ export default function AdminMenuPage() {
     }
 
     try {
-      const url = '/api/admin/menu'
+const url = apiPath('/api/admin/menu')
       const method = modalMode === 'edit' ? 'PUT' : 'POST'
       const body = modalMode === 'edit' 
         ? { ...formData, id: editingItem.id }

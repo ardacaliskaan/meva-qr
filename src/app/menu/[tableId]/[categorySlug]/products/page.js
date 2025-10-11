@@ -7,10 +7,11 @@ import {
   Coffee, Clock, Flame, Star, Heart, AlertCircle 
 } from 'lucide-react'
 import Image from 'next/image'
-import toast from 'react-hot-toast'
+import { Toaster } from 'react-hot-toast'
 // 🔐 YENİ: Session Manager Import
 import { SessionManager } from '@/lib/sessionManager'
 import { apiPath } from '@/lib/api'
+
 
 export default function ProductsPage({ params }) {
   // States
@@ -459,6 +460,32 @@ Denemee
   }
 
   return (
+  <>
+    {/* 🎯 Müşteri Menüsü için Özel Toast - Sol Alt Köşe */}
+    <Toaster 
+      position="bottom-left"
+      toastOptions={{
+        duration: 2500,
+        style: {
+          background: '#10b981',
+          color: '#ffffff',
+          borderRadius: '12px',
+          fontSize: '13px',
+          padding: '10px 14px',
+          maxWidth: '280px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+        },
+        success: {
+          duration: 2000,
+          icon: '✅',
+        },
+      }}
+      containerStyle={{
+        bottom: 80,
+        left: 20,
+      }}
+    />
+
     <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-red-50">
       {/* Header */}
       <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-amber-100 shadow-sm">
@@ -762,19 +789,6 @@ Denemee
                     rows={3}
                   />
                 </div>
-DenemeeDenemee
-Denemee
-Denemee
-Denemee
-Denemee
-Denemee
-Denemee
-Denemee
-Denemee
-Denemee
-Denemee
-Denemee
-
 
                 {/* Add to Cart Button */}
                 <button
@@ -788,7 +802,7 @@ Denemee
           </motion.div>
         )}
       </AnimatePresence>
-Denemee
+
       {/* Cart Modal */}
       <AnimatePresence>
         {showCartModal && (
@@ -903,5 +917,6 @@ Denemee
         )}
       </AnimatePresence>
     </div>
-  )
+  </>
+)
 }

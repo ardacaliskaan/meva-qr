@@ -104,8 +104,8 @@ export default function AdminLayout({ children }) {
                   <ChefHat className="w-6 h-6 text-white" />
                 </div>
                 <div>
-                  <h1 className="text-xl font-bold text-gray-900">RestaurantQR</h1>
-                  <p className="text-sm text-gray-500">Admin Panel</p>
+                  <h1 className="text-xl font-bold text-gray-900">Meva Cafe</h1>
+                  <p className="text-sm text-gray-500">Yetkili Panel</p>
                 </div>
               </div>
               {isMobile && (

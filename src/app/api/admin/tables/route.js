@@ -4,7 +4,6 @@ import clientPromise from '@/lib/mongodb'
 // GET - Tüm masaları listele
 export async function GET() {
   try {
-
     const client = await clientPromise
     const db = client.db('restaurant-qr')
     const tables = await db.collection('tables')
@@ -22,8 +21,6 @@ export async function GET() {
 // POST - Yeni masa oluştur
 export async function POST(request) {
   try {
-
-
     const data = await request.json()
     const { number, capacity, location, status, notes } = data
 
@@ -34,15 +31,15 @@ export async function POST(request) {
 
     const client = await clientPromise
     const db = client.db('restaurant-qr')
-    
-    // Masa numarası unique kontrolü
-    const existingTable = await db.collection('tables').findOne({ number: parseInt(number) })
+
+    // Masa numarası unique kontrolü (string bazlı)
+    const existingTable = await db.collection('tables').findOne({ number: number.trim() })
     if (existingTable) {
       return NextResponse.json({ error: 'Bu masa numarası zaten kullanımda' }, { status: 400 })
     }
 
     const tableData = {
-      number: parseInt(number),
+      number: number.trim(),  // artık string olarak saklanıyor
       capacity: parseInt(capacity),
       location: location || 'main',
       status: status || 'empty',
@@ -65,7 +62,6 @@ export async function POST(request) {
 // PUT - Masa güncelle
 export async function PUT(request) {
   try {
-
     const data = await request.json()
     const { _id, number, capacity, location, status, notes, qrCode } = data
 
@@ -76,11 +72,11 @@ export async function PUT(request) {
     const client = await clientPromise
     const db = client.db('restaurant-qr')
     const { ObjectId } = require('mongodb')
-    
-    // Eğer masa numarası değişiyorsa, unique kontrolü yap
+
+    // Eğer masa numarası değişiyorsa, unique kontrolü yap (string bazlı)
     if (number) {
-      const existingTable = await db.collection('tables').findOne({ 
-        number: parseInt(number), 
+      const existingTable = await db.collection('tables').findOne({
+        number: number.trim(),
         _id: { $ne: new ObjectId(_id) }
       })
       if (existingTable) {
@@ -92,8 +88,7 @@ export async function PUT(request) {
       updatedAt: new Date()
     }
 
-    // Sadece gönderilen alanları güncelle
-    if (number !== undefined) updateData.number = parseInt(number)
+    if (number !== undefined) updateData.number = number.trim()
     if (capacity !== undefined) updateData.capacity = parseInt(capacity)
     if (location !== undefined) updateData.location = location
     if (status !== undefined) updateData.status = status
@@ -120,9 +115,8 @@ export async function PUT(request) {
 // DELETE - Masa sil
 export async function DELETE(request) {
   try {
-
     const { id } = await request.json()
-    
+
     if (!id) {
       return NextResponse.json({ error: 'Masa ID gerekli' }, { status: 400 })
     }
@@ -131,7 +125,6 @@ export async function DELETE(request) {
     const db = client.db('restaurant-qr')
     const { ObjectId } = require('mongodb')
 
-    // Önce masa var mı kontrol et
     const table = await db.collection('tables').findOne({ _id: new ObjectId(id) })
     if (!table) {
       return NextResponse.json({ error: 'Masa bulunamadı' }, { status: 404 })
@@ -144,8 +137,8 @@ export async function DELETE(request) {
     })
 
     if (activeOrders) {
-      return NextResponse.json({ 
-        error: 'Bu masanın aktif siparişi bulunuyor. Önce siparişleri tamamlayın.' 
+      return NextResponse.json({
+        error: 'Bu masanın aktif siparişi bulunuyor. Önce siparişleri tamamlayın.'
       }, { status: 400 })
     }
 

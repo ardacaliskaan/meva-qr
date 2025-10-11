@@ -80,7 +80,7 @@ export async function POST(request) {
       console.log('✅ Resim işlendi ve kaydedildi:', filepath)
 
       // Public URL oluştur
-      const imageUrl = `/uploads/menu/${filename}`
+const imageUrl = `${process.env.NEXT_PUBLIC_BASE_PATH || ''}/uploads/menu/${filename}`
 
       // Dosya boyutunu hesapla
       const processedSize = processedImage.length

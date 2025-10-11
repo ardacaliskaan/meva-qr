@@ -791,15 +791,14 @@ const menuUrl = `${baseUrl}/meva/menu/${table.number}`
                     </label>
                     <div className="relative">
                       <input
-                        type="number"
-                        required
-                        min="1"
-                        max="999"
-                        value={formData.number}
-                        onChange={(e) => setFormData({...formData, number: e.target.value})}
-                        className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all bg-white"
-                        placeholder="Örn: 15"
-                      />
+  type="text"
+  required
+  value={formData.number}
+  onChange={(e) => setFormData({ ...formData, number: e.target.value })}
+  className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all bg-white"
+  placeholder="Örn: M1, VIP2, A12..."
+/>
+
                       <div className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400">
                         #
                       </div>

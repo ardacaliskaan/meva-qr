@@ -7,7 +7,7 @@ import {
   Trash2, Send, Clock, Sparkles, Check, AlertCircle, MessageSquare
 } from 'lucide-react'
 import Image from 'next/image'
-import toast from 'react-hot-toast'
+import toast, { Toaster } from 'react-hot-toast'
 import MenuFooter from '@/components/MenuFooter'
 // 🔐 Session Manager Import
 import { SessionManager } from '@/lib/sessionManager'
@@ -403,6 +403,30 @@ const handleAddToCart = () => {
   }
 
   return (
+      <>
+    <Toaster 
+      position="bottom-left"
+      toastOptions={{
+        duration: 2500,
+        style: {
+          background: '#10b981',
+          color: '#ffffff',
+          borderRadius: '12px',
+          fontSize: '13px',
+          padding: '10px 14px',
+          maxWidth: '280px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+        },
+        success: {
+          duration: 2000,
+          icon: '✅',
+        },
+      }}
+      containerStyle={{
+        bottom: 80,
+        left: 20,
+      }}
+    />
 <div className="min-h-screen bg-gradient-to-br from-teal-50 via-cyan-50 to-emerald-100 relative overflow-hidden">
       {/* Header */}
       <motion.div 
@@ -579,7 +603,7 @@ const handleAddToCart = () => {
                           className="bg-gradient-to-r from-teal-500 to-cyan-600 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 shadow-md hover:shadow-lg transition-all"
                         >
                           <Plus className="w-4 h-4" />
-                          Ekle
+                          İleri
                         </motion.button>
                       </div>
                     </div>
@@ -874,7 +898,40 @@ className={`p-3 rounded-lg border-2 font-semibold transition-colors focus:outlin
           </motion.div>
         )}
       </AnimatePresence>
-
+{/* 🎯 Sticky Sepet İkonu - HER ZAMAN GÖRÜNÜR */}
+      <motion.button
+        initial={{ scale: 0 }}
+        animate={{ scale: 1 }}
+        whileHover={{ scale: 1.05, y: -5 }}
+        whileTap={{ scale: 0.95 }}
+        onClick={openCartModal}
+        className={`fixed bottom-6 right-6 text-white p-4 rounded-full shadow-2xl transition-all duration-300 z-30 ${
+          cart.length > 0 
+            ? 'bg-gradient-to-r from-teal-500 to-cyan-600' 
+            : 'bg-gray-400'
+        }`}
+      >
+        <div className="flex items-center space-x-2">
+          <ShoppingCart className="w-6 h-6" />
+          {cart.length > 0 && (
+            <>
+              <div className="h-6 w-px bg-white/30"></div>
+              <span className="font-bold text-sm">₺{getCartTotal().toFixed(2)}</span>
+            </>
+          )}
+        </div>
+        
+        {/* Badge - Toplam Ürün Adedi */}
+        {cart.length > 0 && (
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center border-2 border-white shadow-lg"
+          >
+            {cart.reduce((total, item) => total + item.quantity, 0)}
+          </motion.div>
+        )}
+      </motion.button>
       {/* 🆕 Cart Modal */}
      <AnimatePresence>
   {showCartModal && (
@@ -1090,6 +1147,7 @@ className={`p-3 rounded-lg border-2 font-semibold transition-colors focus:outlin
 </AnimatePresence>
 
       <MenuFooter />
-    </div>
+</div>
+  </>
   )
 }

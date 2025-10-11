@@ -7,7 +7,8 @@ import {
   MapPin, MessageSquare, DollarSign, RefreshCw,
   Sparkles, Coffee, Download, Printer,
   BarChart3, Activity, Grid, List,
-  Volume2, VolumeX, Minus, ShoppingCart, Check
+  Volume2, VolumeX, Minus, ShoppingCart, Check,
+  Settings, Bell, BellOff, Play
 } from 'lucide-react'
 import Image from 'next/image'
 import toast from 'react-hot-toast'
@@ -23,6 +24,7 @@ export default function AdminOrdersPage() {
   const [selectedTable, setSelectedTable] = useState(null)
   const [showModal, setShowModal] = useState(false)
   const [showStatsModal, setShowStatsModal] = useState(false)
+  const [showNotificationSettings, setShowNotificationSettings] = useState(false)
   
   const [filterStatus, setFilterStatus] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
@@ -31,7 +33,11 @@ export default function AdminOrdersPage() {
   const [viewMode, setViewMode] = useState('grid')
   const [showFilters, setShowFilters] = useState(false)
   
+  // 🔔 BİLDİRİM AYARLARI
   const [soundEnabled, setSoundEnabled] = useState(true)
+  const [notificationEnabled, setNotificationEnabled] = useState(false)
+  const [notificationPermission, setNotificationPermission] = useState('default')
+  const [volume, setVolume] = useState(0.7)
   const [autoRefresh, setAutoRefresh] = useState(true)
   
   const audioRef = useRef(null)
@@ -44,27 +50,275 @@ export default function AdminOrdersPage() {
     delivered: { label: 'Teslim Edildi', color: 'purple', icon: Package, gradient: 'from-purple-500 to-pink-600' }
   }
 
-  // 🆕 10 SANİYEDE BİR OTOMATİK YENİLEME
+  // 🔔 BİLDİRİM İZNİ KONTROLÜ VE AYARLARI YÜKLEME
+  useEffect(() => {
+    // Browser bildirim desteği kontrolü
+    if ('Notification' in window) {
+      setNotificationPermission(Notification.permission)
+      if (Notification.permission === 'granted') {
+        setNotificationEnabled(true)
+      }
+    }
+    
+    // LocalStorage'dan ayarları yükle
+    try {
+      const savedVolume = localStorage.getItem('orderNotificationVolume')
+      const savedSound = localStorage.getItem('orderSoundEnabled')
+      const savedNotif = localStorage.getItem('orderNotificationEnabled')
+      
+      // 🆕 SON SİPARİŞ SAYISINI YUKLE
+      const savedOrderCount = localStorage.getItem('lastOrderCount')
+      if (savedOrderCount) {
+        previousOrderCountRef.current = parseInt(savedOrderCount)
+        console.log('📦 LocalStorage\'dan yüklendi:', previousOrderCountRef.current)
+      }
+      
+      if (savedVolume) setVolume(parseFloat(savedVolume))
+      if (savedSound !== null) setSoundEnabled(savedSound === 'true')
+      if (savedNotif !== null && Notification.permission === 'granted') {
+        setNotificationEnabled(savedNotif === 'true')
+      }
+    } catch (error) {
+      console.error('LocalStorage error:', error)
+    }
+  }, [])
+
+  // 🔊 SES SEVİYESİ DEĞİŞTİĞİNDE
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = volume
+    }
+    try {
+      localStorage.setItem('orderNotificationVolume', volume.toString())
+    } catch (error) {
+      console.error('LocalStorage save error:', error)
+    }
+  }, [volume])
+
+  // 💾 AYARLARI KAYDET
+  useEffect(() => {
+    try {
+      localStorage.setItem('orderSoundEnabled', soundEnabled.toString())
+      localStorage.setItem('orderNotificationEnabled', notificationEnabled.toString())
+    } catch (error) {
+      console.error('LocalStorage save error:', error)
+    }
+  }, [soundEnabled, notificationEnabled])
+
+  // 🔄 OTOMATİK YENİLEME (10 saniye)
   useEffect(() => {
     loadOrders()
     if (autoRefresh) {
-      const interval = setInterval(loadOrders, 10000) // 10 saniye
+      const interval = setInterval(loadOrders, 10000)
       return () => clearInterval(interval)
     }
   }, [filterStatus, dateFilter, autoRefresh])
 
+  // 🚨 YENİ SİPARİŞ ALGILAMA
   useEffect(() => {
-    if (soundEnabled && originalOrders.length > previousOrderCountRef.current && previousOrderCountRef.current > 0) {
-      playNotificationSound()
-      toast.success('Yeni sipariş geldi! 🔔', { duration: 4000 })
+    // İlk yükleme değilse (previousOrderCountRef > 0) ve sipariş sayısı artmışsa
+    if (originalOrders.length > previousOrderCountRef.current && previousOrderCountRef.current > 0) {
+      const fark = originalOrders.length - previousOrderCountRef.current
+      console.log('🔔 YENİ SİPARİŞ ALGILANDI!', {
+        önceki: previousOrderCountRef.current,
+        yeni: originalOrders.length,
+        fark: fark
+      })
+      
+      handleNewOrderNotification()
     }
-    previousOrderCountRef.current = originalOrders.length
-  }, [originalOrders.length, soundEnabled])
 
-  const playNotificationSound = () => {
-    if (audioRef.current) {
-      audioRef.current.play().catch(e => console.log('Audio play failed:', e))
+    // Güncel sayıyı kaydet (her zaman)
+    if (originalOrders.length >= 0) {
+      console.log('💾 Sipariş sayısı kaydediliyor:', originalOrders.length)
+      previousOrderCountRef.current = originalOrders.length
+      localStorage.setItem('lastOrderCount', originalOrders.length.toString())
     }
+  }, [originalOrders.length])
+
+  // 🔔 BİLDİRİM İZNİ İSTEME
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      toast.error('Tarayıcınız bildirimleri desteklemiyor')
+      return
+    }
+
+    try {
+      const permission = await Notification.requestPermission()
+      setNotificationPermission(permission)
+      
+      if (permission === 'granted') {
+        setNotificationEnabled(true)
+        toast.success('Bildirimler açıldı! 🔔', { duration: 3000 })
+        
+        // Test bildirimi
+        setTimeout(() => {
+          showBrowserNotification(
+            '✅ Bildirimler Aktif!',
+            'Yeni siparişler için bildirim alacaksınız.'
+          )
+        }, 500)
+      } else if (permission === 'denied') {
+        setNotificationEnabled(false)
+        toast.error('Bildirim izni reddedildi. Tarayıcı ayarlarından açabilirsiniz.')
+      }
+    } catch (error) {
+      console.error('Notification permission error:', error)
+      toast.error('Bildirim izni alınamadı')
+    }
+  }
+
+  // 🔊 SES ÇALMA
+  const playNotificationSound = () => {
+    if (!soundEnabled) return
+    
+    try {
+      if (audioRef.current) {
+        // Force reload audio (cache bypass)
+        audioRef.current.load()
+        audioRef.current.volume = volume
+        audioRef.current.currentTime = 0
+        
+        const playPromise = audioRef.current.play()
+        
+        if (playPromise !== undefined) {
+          playPromise.catch(error => {
+            console.log('Audio play prevented:', error)
+            // iOS Safari için user interaction gerekiyor
+            if (error.name === 'NotAllowedError') {
+              toast.error('Ses çalınamadı. Sayfayla etkileşime geçin.', {
+                duration: 2000,
+                icon: '🔇'
+              })
+            }
+          })
+        }
+      }
+    } catch (error) {
+      console.error('Sound play error:', error)
+    }
+  }
+
+  // 📱 VİBRASYON (MOBİL)
+  const triggerVibration = () => {
+    try {
+      if ('vibrate' in navigator) {
+        // Kısa-uzun-kısa pattern (200ms-100ms-200ms)
+        navigator.vibrate([200, 100, 200])
+      }
+    } catch (error) {
+      console.error('Vibration error:', error)
+    }
+  }
+
+  // 🔔 BROWSER BİLDİRİMİ GÖSTER
+  const showBrowserNotification = (title, body, options = {}) => {
+    if (!notificationEnabled || notificationPermission !== 'granted') return
+
+    try {
+      const notification = new Notification(title, {
+        body,
+        // icon: '/logo.png', // Opsiyonel - dosya yoksa kaldır
+        // badge: '/badge.png', // Opsiyonel - dosya yoksa kaldır
+        tag: 'new-order',
+        requireInteraction: false,
+        vibrate: [200, 100, 200],
+        silent: false,
+        ...options
+      })
+
+      notification.onclick = () => {
+        window.focus()
+        notification.close()
+        
+        // En yeni siparişi aç
+        if (orders.length > 0) {
+          const newestTable = orders[0]
+          setSelectedTable(newestTable)
+          setShowModal(true)
+        }
+      }
+
+      // 10 saniye sonra otomatik kapat
+      setTimeout(() => notification.close(), 10000)
+      
+    } catch (error) {
+      console.error('Browser notification error:', error)
+    }
+  }
+
+  // 🚨 YENİ SİPARİŞ GELDİĞİNDE TÜM BİLDİRİMLER
+  const handleNewOrderNotification = () => {
+    const newOrdersCount = originalOrders.length - previousOrderCountRef.current
+    
+    console.log('🎉 BİLDİRİMLER TETİKLENİYOR:', {
+      yeniSiparişSayısı: newOrdersCount,
+      toplamSipariş: originalOrders.length,
+      sesAçık: soundEnabled,
+      bildirimAçık: notificationEnabled
+    })
+    
+    // 1. 🔊 Ses çal
+    if (soundEnabled) {
+      playNotificationSound()
+    }
+    
+    // 2. 📱 Vibrasyon (mobil)
+    triggerVibration()
+    
+    // 3. 🍞 Toast bildirimi
+    toast.success(
+      `${newOrdersCount} yeni sipariş geldi! 🎉`,
+      {
+        duration: 5000,
+        icon: '🔔',
+        style: {
+          background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+          color: 'white',
+          fontSize: '16px',
+          fontWeight: 'bold',
+          padding: '16px'
+        }
+      }
+    )
+    
+    // 4. 🔔 Browser bildirimi
+    if (notificationEnabled) {
+      showBrowserNotification(
+        '🍽️ Yeni Sipariş Geldi!',
+        `${newOrdersCount} yeni sipariş aldınız. Toplam ${originalOrders.length} aktif sipariş.`
+      )
+    }
+  }
+
+  // 🧪 SES TESTİ
+  const testSound = () => {
+    playNotificationSound()
+    triggerVibration()
+    toast.success('Test sesi çalındı! 🔊', { icon: '🎵' })
+  }
+
+  // 🧪 BİLDİRİM TESTİ
+  const testNotification = () => {
+    if (notificationPermission !== 'granted') {
+      toast.error('Önce bildirim izni verin')
+      return
+    }
+    
+    // 1. 🔊 Ses çal
+    playNotificationSound()
+    
+    // 2. 📱 Titreşim
+    triggerVibration()
+    
+    // 3. 🔔 Browser bildirimi
+    showBrowserNotification(
+      '🧪 Test Bildirimi',
+      'Bildirimler düzgün çalışıyor! ✅'
+    )
+    
+    // 4. 🍞 Toast
+    toast.success('Test bildirimi gönderildi!', { icon: '✅' })
   }
 
   const loadOrders = async () => {
@@ -76,7 +330,7 @@ export default function AdminOrdersPage() {
         sortBy: 'createdAt',
         sortOrder: 'desc',
         today: dateFilter === 'today' ? 'true' : 'false',
-        excludeCompleted: 'true' // 🆕 Completed masaları gösterme
+        excludeCompleted: 'true'
       })
 
       if (filterStatus !== 'all') params.append('status', filterStatus)
@@ -99,7 +353,6 @@ export default function AdminOrdersPage() {
     }
   }
 
-  // 🆕 ÜRÜN BAZLI DURUM GÜNCELLEMESİ
   const updateItemStatus = async (orderId, itemIndex, newStatus) => {
     try {
       const res = await fetch(apiPath('/api/orders'), {
@@ -118,7 +371,6 @@ export default function AdminOrdersPage() {
         toast.success(`Ürün durumu güncellendi: ${statusConfig[newStatus]?.label}`, { icon: '✅' })
         loadOrders()
         
-        // Modal açıksa güncelle
         if (selectedTable) {
           const updatedTable = orders.find(t => t.tableNumber === selectedTable.tableNumber)
           if (updatedTable) setSelectedTable(updatedTable)
@@ -155,7 +407,7 @@ export default function AdminOrdersPage() {
     if (!confirm('Bu siparişi silmek istediğinizden emin misiniz?')) return
 
     try {
-      const res = await fetch(`/api/orders?id=${orderId}`, { method: 'DELETE' })
+      const res = await fetch(apiPath(`/api/orders?id=${orderId}`), { method: 'DELETE' })
       const result = await res.json()
       
       if (result.success) {
@@ -172,7 +424,6 @@ export default function AdminOrdersPage() {
     }
   }
 
-  // 🆕 MASA KAPAT - TÜM SİPARİŞLERİ COMPLETED YAP
   const closeTable = async (tableNumber) => {
     if (!confirm(`Masa ${tableNumber} kapatılsın mı?\n\nMüşteri masadan kalktı ve ödeme yapıldı.\nTüm siparişler tamamlanacak.`)) return
 
@@ -190,7 +441,8 @@ export default function AdminOrdersPage() {
           duration: 3000
         })
         playNotificationSound()
-        loadOrders()
+        
+        await loadOrders()
         setShowModal(false)
       } else {
         toast.error(result.error)
@@ -258,7 +510,12 @@ export default function AdminOrdersPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-gray-100 to-gray-50">
-      <audio ref={audioRef} src="/notification.mp3" preload="auto" />
+      {/* 🔊 AUDIO ELEMENT - Bildirim Sesi (Sadece MP3) */}
+<audio 
+  ref={audioRef} 
+  preload="auto"
+  src="/meva/notification.mp3?v=3"  // ✅ DOĞRU!
+/>
 
       {/* Sticky Header */}
       <div className="bg-white/95 backdrop-blur-lg border-b border-gray-200 sticky top-0 z-40 shadow-lg">
@@ -277,7 +534,7 @@ export default function AdminOrdersPage() {
                   </h1>
                   <p className="text-gray-600 text-sm mt-1">
                     {filteredOrders.length} aktif masa • {originalOrders.length} sipariş
-                    {autoRefresh && <span className="ml-2 text-green-600">• Otomatik yenileme açık</span>}
+                    {autoRefresh && <span className="ml-2 text-green-600">• Otomatik yenileme</span>}
                   </p>
                 </div>
               </div>
@@ -304,10 +561,26 @@ export default function AdminOrdersPage() {
                   ))}
                 </div>
 
+                {/* 🔔 BİLDİRİM AYARLARI */}
+                <button
+                  onClick={() => setShowNotificationSettings(true)}
+                  className={`relative p-2.5 rounded-xl transition-all ${
+                    notificationEnabled 
+                      ? 'bg-green-100 text-green-600' 
+                      : 'bg-gray-100 text-gray-600'
+                  }`}
+                  title="Bildirim Ayarları"
+                >
+                  {notificationEnabled ? <Bell className="w-5 h-5" /> : <BellOff className="w-5 h-5" />}
+                  {notificationEnabled && (
+                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full"></span>
+                  )}
+                </button>
+
                 <button
                   onClick={() => setSoundEnabled(!soundEnabled)}
                   className={`p-2.5 rounded-xl transition-all ${
-                    soundEnabled ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'
+                    soundEnabled ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
                   }`}
                   title="Ses Bildirimleri"
                 >
@@ -317,7 +590,7 @@ export default function AdminOrdersPage() {
                 <button
                   onClick={() => setAutoRefresh(!autoRefresh)}
                   className={`p-2.5 rounded-xl transition-all ${
-                    autoRefresh ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
+                    autoRefresh ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-600'
                   }`}
                   title="Otomatik Yenileme (10 saniye)"
                 >
@@ -327,7 +600,7 @@ export default function AdminOrdersPage() {
                 <button
                   onClick={() => setShowFilters(!showFilters)}
                   className={`p-2.5 rounded-xl transition-all ${
-                    showFilters ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-600'
+                    showFilters ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-600'
                   }`}
                 >
                   <Filter className="w-5 h-5" />
@@ -561,7 +834,180 @@ export default function AdminOrdersPage() {
         )}
       </div>
 
-      {/* 🎯 MASA DETAY MODAL - HER ÜRÜN İÇİN DURUM */}
+      {/* 🔔 BİLDİRİM AYARLARI MODAL */}
+      <AnimatePresence>
+        {showNotificationSettings && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowNotificationSettings(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-6 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-t-3xl">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Settings className="w-7 h-7" />
+                    <h2 className="text-2xl font-bold">Bildirim Ayarları</h2>
+                  </div>
+                  <button
+                    onClick={() => setShowNotificationSettings(false)}
+                    className="p-2 hover:bg-white/20 rounded-xl transition-colors"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6 space-y-6">
+                {/* Browser Bildirimleri */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-lg ${notificationEnabled ? 'bg-green-100' : 'bg-gray-100'}`}>
+                        {notificationEnabled ? <Bell className="w-5 h-5 text-green-600" /> : <BellOff className="w-5 h-5 text-gray-600" />}
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-gray-900">Browser Bildirimleri</h3>
+                        <p className="text-sm text-gray-600">
+                          {notificationPermission === 'granted' ? 'Aktif' : 
+                           notificationPermission === 'denied' ? 'Reddedildi' : 'Kapalı'}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (notificationPermission === 'granted') {
+                          setNotificationEnabled(!notificationEnabled)
+                        } else {
+                          requestNotificationPermission()
+                        }
+                      }}
+                      disabled={notificationPermission === 'denied'}
+                      className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors ${
+                        notificationEnabled ? 'bg-green-500' : 'bg-gray-300'
+                      } ${notificationPermission === 'denied' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                    >
+                      <span className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                        notificationEnabled ? 'translate-x-7' : 'translate-x-1'
+                      }`} />
+                    </button>
+                  </div>
+
+                  {notificationPermission === 'denied' && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                      <p className="text-sm text-red-700">
+                        ⚠️ Bildirim izni reddedildi. Tarayıcı ayarlarından izin vermelisiniz.
+                      </p>
+                    </div>
+                  )}
+
+                  {notificationPermission === 'default' && (
+                    <button
+                      onClick={requestNotificationPermission}
+                      className="w-full px-4 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl hover:shadow-lg transition-all font-medium"
+                    >
+                      İzin Ver ve Aç
+                    </button>
+                  )}
+
+                  {notificationEnabled && (
+                    <button
+                      onClick={testNotification}
+                      className="w-full px-4 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+                    >
+                      <Play className="w-4 h-4" />
+                      Test Bildirimi Gönder
+                    </button>
+                  )}
+                </div>
+
+                <div className="border-t pt-6">
+                  {/* Ses Bildirimleri */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${soundEnabled ? 'bg-blue-100' : 'bg-gray-100'}`}>
+                          {soundEnabled ? <Volume2 className="w-5 h-5 text-blue-600" /> : <VolumeX className="w-5 h-5 text-gray-600" />}
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-gray-900">Ses Bildirimleri</h3>
+                          <p className="text-sm text-gray-600">
+                            {soundEnabled ? 'Açık' : 'Kapalı'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setSoundEnabled(!soundEnabled)}
+                        className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors ${
+                          soundEnabled ? 'bg-blue-500' : 'bg-gray-300'
+                        } cursor-pointer`}
+                      >
+                        <span className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                          soundEnabled ? 'translate-x-7' : 'translate-x-1'
+                        }`} />
+                      </button>
+                    </div>
+
+                    {/* Ses Seviyesi */}
+                    {soundEnabled && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-gray-700">Ses Seviyesi</span>
+                          <span className="text-sm font-bold text-blue-600">{Math.round(volume * 100)}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.1"
+                          value={volume}
+                          onChange={(e) => setVolume(parseFloat(e.target.value))}
+                          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                        />
+                        <div className="flex justify-between text-xs text-gray-500">
+                          <span>Sessiz</span>
+                          <span>Yüksek</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {soundEnabled && (
+                      <button
+                        onClick={testSound}
+                        className="w-full px-4 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+                      >
+                        <Play className="w-4 h-4" />
+                        Sesi Test Et
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Bilgi */}
+                <div className="p-4 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl">
+                  <div className="flex gap-3">
+                    <Sparkles className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div className="text-sm text-amber-900">
+                      <p className="font-semibold mb-1">📱 Mobil Uyumluluk</p>
+                      <p>iOS Safari ve Android Chromeda titreşim desteği vardır. Bildirimleri kullanmak için izin vermelisiniz.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* MASA DETAY MODAL */}
       <AnimatePresence>
         {showModal && selectedTable && (
           <motion.div
@@ -638,7 +1084,7 @@ export default function AdminOrdersPage() {
                       <div className="text-2xl font-bold text-amber-600">₺{order.totalAmount.toFixed(2)}</div>
                     </div>
 
-                    {/* 🆕 HER ÜRÜN İÇİN AYRI DURUM KONTROL */}
+                    {/* HER ÜRÜN İÇİN AYRI DURUM KONTROL */}
                     <div className="space-y-4">
                       {(order.items || []).map((item, itemIdx) => (
                         <div key={itemIdx} className="bg-white rounded-xl p-4 border-2 border-gray-200">
@@ -670,7 +1116,7 @@ export default function AdminOrdersPage() {
                                 ₺{item.price.toFixed(2)} × {item.quantity} = ₺{(item.price * item.quantity).toFixed(2)}
                               </p>
 
-                              {/* 🆕 ÜRÜN DURUM BUTONLARI */}
+                              {/* ÜRÜN DURUM BUTONLARI */}
                               <div className="flex flex-wrap gap-2 mb-3">
                                 {Object.entries(statusConfig).map(([status, config]) => {
                                   const Icon = config.icon

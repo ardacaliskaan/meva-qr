@@ -69,7 +69,7 @@ export default function AdminIngredientsPage() {
     e.preventDefault()
     
     try {
-      const url = '/api/admin/ingredients'
+const url = apiPath('/api/admin/ingredients')
       const method = editingItem ? 'PUT' : 'POST'
       const body = editingItem 
         ? { ...formData, id: editingItem.id }

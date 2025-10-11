@@ -59,7 +59,12 @@ export async function GET(request) {
       maxAmount: searchParams.get('maxAmount'),
       search: searchParams.get('search')
     })
-    
+    const excludeCompleted = searchParams.get('excludeCompleted') === 'true'
+if (excludeCompleted) {
+  filter.status = { 
+    $nin: ['completed', 'cancelled'] 
+  }
+}
     // Build sort
     const sort = buildOrderSort(sortBy, sortOrder)
     
