@@ -74,7 +74,7 @@ export default function ProductsPage({ params }) {
     try {
       setSessionLoading(true)
       
-      const manager = new SessionManager(parseInt(tableId))
+const manager = new SessionManager(tableId)
       setSessionManager(manager)
       
       console.log('🔐 Initializing session for table:', tableId)
@@ -291,7 +291,7 @@ export default function ProductsPage({ params }) {
     try {
       // 🔐 Session Bilgilerini Hazırla
       const orderData = {
-        tableNumber: parseInt(tableId),
+tableNumber: tableId.toString(),
         tableId: tableId.toString(),
         items: cart.map(item => ({
           menuItemId: item.menuItemId,

@@ -86,8 +86,8 @@ export default function SubcategoryProductsPage({ params }) {
     try {
       setSessionLoading(true)
       
-      const manager = new SessionManager(parseInt(tableId))
-      setSessionManager(manager)
+const manager = new SessionManager(tableId)  // ✅ String olarak gönder      
+  setSessionManager(manager)
       
       console.log('🔐 Initializing session for table:', tableId)
       
@@ -312,8 +312,8 @@ const handleAddToCart = () => {
       const orderData = {
         sessionId: session.sessionId,
         deviceFingerprint: deviceFingerprint,
-        tableNumber: parseInt(tableId),
-        tableId: tableId,
+        tableNumber: tableId.toString(),  // ✅ DOĞRU - String olarak gönder
+        tableId: tableId.toString(),      // ✅ DOĞRU - String olarak gönder
         items: cart.map(item => ({
           menuItemId: item.menuItemId,
           name: item.name,
@@ -890,7 +890,7 @@ className={`p-3 rounded-lg border-2 font-semibold transition-colors focus:outlin
                     }`}
                   >
                     <Check className="w-6 h-6" />
-                    Sepete Ekle
+                    Onayla
                   </button>
                 </div>
               </div>

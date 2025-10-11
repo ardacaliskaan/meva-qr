@@ -92,52 +92,70 @@ export default function TablesPage() {
   }
 
   const handleSubmit = async (e) => {
-    e.preventDefault()
-    setLoading(true)
+  e.preventDefault()
+  setLoading(true)
 
-    try {
-const url = apiPath('/api/admin/tables')
-      const method = editingTable ? 'PUT' : 'POST'
-      const body = editingTable ? 
-        JSON.stringify({ ...formData, _id: editingTable._id }) :
-        JSON.stringify(formData)
-
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body
-      })
-
-      const data = await res.json()
-
-      if (res.ok) {
-        await fetchTables()
-        resetForm()
-        setShowModal(false)
-        toast.success(editingTable ? 'Masa güncellendi' : 'Masa eklendi')
-      } else {
-        toast.error(data.error || 'İşlem başarısız')
-      }
-    } catch (error) {
-      console.error('Masa kaydedilirken hata:', error)
-      toast.error('Bağlantı hatası')
-    } finally {
+  try {
+    const url = apiPath('/api/admin/tables')
+    const method = editingTable ? 'PUT' : 'POST'
+    
+    // 🔥 YENİ: Masa numarasını normalize et (büyük harf + trim)
+    const normalizedNumber = formData.number.toString().toUpperCase().trim()
+    
+    // Boş kontrol
+    if (!normalizedNumber) {
+      toast.error('Masa numarası boş olamaz')
       setLoading(false)
+      return
     }
+
+    // Normalize edilmiş data
+    const submitData = {
+      ...formData,
+      number: normalizedNumber  // 🔥 Normalize edilmiş numara
+    }
+    
+    // Eğer düzenleme ise _id'yi ekle
+    const body = editingTable ? 
+      JSON.stringify({ ...submitData, _id: editingTable._id }) :
+      JSON.stringify(submitData)
+
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body
+    })
+
+    const data = await res.json()
+
+    if (res.ok) {
+      await fetchTables()
+      resetForm()
+      setShowModal(false)
+      toast.success(editingTable ? 'Masa güncellendi' : 'Masa eklendi')
+    } else {
+      toast.error(data.error || 'İşlem başarısız')
+    }
+  } catch (error) {
+    console.error('Masa kaydedilirken hata:', error)
+    toast.error('Bağlantı hatası')
+  } finally {
+    setLoading(false)
   }
+}
 
   const handleEdit = (table) => {
-    setEditingTable(table)
-    setFormData({
-      number: table.number,
-      capacity: table.capacity,
-      location: table.location,
-      status: table.status,
-      qrCode: table.qrCode || '',
-      notes: table.notes || ''
-    })
-    setShowModal(true)
-  }
+  setEditingTable(table)
+  setFormData({
+    number: table.number.toString().toUpperCase().trim(),  // 🔥 Normalize et
+    capacity: table.capacity,
+    location: table.location,
+    status: table.status,
+    qrCode: table.qrCode || '',
+    notes: table.notes || ''
+  })
+  setShowModal(true)
+}
 
   const handleDelete = async (id, tableNumber) => {
     if (!confirm(`Masa ${tableNumber} silinecek. Emin misiniz?`)) return
@@ -209,86 +227,147 @@ const menuUrl = `${baseUrl}/meva/menu/${table.number}`
     }
   }
 
-  const printQRCode = (table) => {
-    if (!table.qrCode) {
-      toast.error('QR kod bulunamadı')
-      return
-    }
-
-    const printWindow = window.open('', '_blank')
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Masa ${table.number} QR Kod</title>
-          <style>
-            body { 
-              display: flex; 
-              flex-direction: column; 
-              align-items: center; 
-              justify-content: center; 
-              min-height: 100vh; 
-              margin: 0; 
-              font-family: Arial, sans-serif; 
-              background: #f8f9fa;
-            }
-            .qr-container { 
-              text-align: center; 
-              padding: 40px; 
-              border: 3px solid #333; 
-              border-radius: 20px; 
-              background: white; 
-              box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-              max-width: 400px;
-            }
-            .restaurant-name { 
-              font-size: 24px; 
-              color: #333; 
-              margin-bottom: 20px; 
-              font-weight: bold;
-            }
-            h1 { 
-              margin: 0 0 30px 0; 
-              font-size: 32px; 
-              font-weight: bold; 
-              color: #1e293b;
-            }
-            img { 
-              max-width: 280px; 
-              height: auto; 
-              border-radius: 10px;
-              box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-            }
-            .instructions { 
-              margin: 30px 0 0 0; 
-              font-size: 18px; 
-              color: #666; 
-              font-weight: 500;
-            }
-            .details { 
-              font-size: 14px; 
-              margin-top: 15px; 
-              color: #888;
-              padding-top: 15px;
-              border-top: 1px solid #eee;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="qr-container">
-            <div class="restaurant-name">🍽️ Restaurant QR Menu</div>
-            <h1>MASA ${table.number}</h1>
-            <img src="${table.qrCode}" alt="QR Kod" />
-            <p class="instructions">Menüyü görmek için QR kodu okutun</p>
-            <div class="details">
-              ${table.capacity} kişilik • ${getLocationLabel(table.location)}
-            </div>
-          </div>
-        </body>
-      </html>
-    `)
-    printWindow.document.close()
-    printWindow.print()
+const printQRCode = (table) => {
+  if (!table.qrCode) {
+    toast.error('QR kod bulunamadı')
+    return
   }
+
+  const printWindow = window.open('', '_blank')
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>Masa ${table.number} QR Kod</title>
+        <style>
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+          }
+          
+          @page {
+            size: A4;
+            margin: 0;
+          }
+          
+          body { 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: white;
+            padding: 20px;
+          }
+          
+          .qr-container { 
+            text-align: center; 
+            padding: 40px 35px; 
+            border: 3px solid #2c3e50;
+            border-radius: 30px;
+            background: white;
+            max-width: 420px;
+            width: 100%;
+          }
+          
+          .restaurant-name { 
+            font-size: 32px;
+            color: #2c3e50;
+            margin-bottom: 20px;
+            font-weight: 700;
+            letter-spacing: 1px;
+          }
+          
+          .table-number {
+            font-size: 72px;
+            font-weight: 900;
+            color: #2c3e50;
+            margin-bottom: 25px;
+            line-height: 1;
+          }
+          
+          .qr-wrapper {
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 20px;
+            margin-bottom: 25px;
+          }
+          
+          img { 
+            max-width: 240px;
+            width: 100%;
+            height: auto;
+            border-radius: 12px;
+          }
+          
+          .instructions { 
+            font-size: 18px;
+            color: #2c3e50;
+            font-weight: 500;
+            line-height: 1.5;
+            margin-bottom: 20px;
+          }
+          
+          .divider {
+            width: 60px;
+            height: 2px;
+            background: #2c3e50;
+            margin: 20px auto;
+            border-radius: 2px;
+          }
+          
+          .capacity {
+            display: inline-block;
+            padding: 8px 20px;
+            background: #ecf0f1;
+            border-radius: 20px;
+            color: #2c3e50;
+            font-weight: 600;
+            font-size: 14px;
+          }
+          
+          @media print {
+            body {
+              padding: 0;
+            }
+            .qr-container {
+              box-shadow: none;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="qr-container">
+          <!-- Restaurant Name -->
+          <div class="restaurant-name">Meva Pasta Cafe</div>
+          
+          <!-- Table Number - Siyah -->
+          <h1 class="table-number">${table.number}</h1>
+          
+          <!-- QR Code -->
+          <div class="qr-wrapper">
+            <img src="${table.qrCode}" alt="QR Kod" />
+          </div>
+          
+          <!-- Instructions -->
+          <div class="instructions">
+            Menüyü görmek için QR kodu okutun
+          </div>
+          
+          <!-- Divider -->
+          <div class="divider"></div>
+          
+          <!-- Info -->
+          <div class="capacity">
+            ${table.capacity} Kişilik • ${getLocationLabel(table.location)}
+          </div>
+        </div>
+      </body>
+    </html>
+  `)
+  printWindow.document.close()
+  printWindow.print()
+}
 
   const getStatusInfo = (status) => {
     return statusOptions.find(option => option.value === status) || statusOptions[0]
@@ -791,13 +870,13 @@ const menuUrl = `${baseUrl}/meva/menu/${table.number}`
                     </label>
                     <div className="relative">
                       <input
-  type="text"
-  required
-  value={formData.number}
-  onChange={(e) => setFormData({ ...formData, number: e.target.value })}
-  className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all bg-white"
-  placeholder="Örn: M1, VIP2, A12..."
-/>
+                      type="text"
+                      required
+                      value={formData.number}
+                      onChange={(e) => setFormData({ ...formData, number: e.target.value })}
+                      className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all bg-white"
+                      placeholder="Örn: M1, VIP2, A12..."
+                    />
 
                       <div className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400">
                         #

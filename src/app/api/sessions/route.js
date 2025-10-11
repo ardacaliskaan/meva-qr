@@ -43,28 +43,79 @@ export async function POST(request) {
       }, { status: 400 })
     }
     
-    // Masa kontrolü
-    const table = await db.collection('tables').findOne({ 
-      number: parseInt(tableNumber) 
+    console.log('🔍 Looking for table:', tableNumber, 'Type:', typeof tableNumber)
+    
+    // ============================================
+    // 🔥 MASA KONTROLÜ - MIXED TYPE SUPPORT
+    // ============================================
+    
+    // 1️⃣ String olarak dene (case-insensitive)
+    let table = await db.collection('tables').findOne({ 
+      number: { 
+        $regex: new RegExp(`^${tableNumber}$`, 'i') 
+      }
     })
     
+    // 2️⃣ Eğer bulunamadıysa ve sayı ise, number olarak dene
+    if (!table && !isNaN(tableNumber)) {
+      table = await db.collection('tables').findOne({ 
+        number: parseInt(tableNumber)
+      })
+      console.log('🔢 Trying as number:', parseInt(tableNumber))
+    }
+    
+    // 3️⃣ Hala bulunamadıysa, büyük harfe çevirerek dene
     if (!table) {
+      table = await db.collection('tables').findOne({ 
+        number: tableNumber.toString().toUpperCase()
+      })
+      console.log('🔤 Trying uppercase:', tableNumber.toString().toUpperCase())
+    }
+    
+    if (!table) {
+      console.log('❌ Table not found:', tableNumber)
       return NextResponse.json({
         success: false,
         error: 'Masa bulunamadı'
       }, { status: 404 })
     }
     
+    console.log('✅ Table found:', table.number, 'Type:', typeof table.number)
+    
     // ============================================
-    // Aktif Session Kontrolü
+    // 🔥 AKTİF SESSION KONTROLÜ - MIXED TYPE
     // ============================================
-    const existingSession = await db.collection('sessions').findOne({
-      tableNumber: parseInt(tableNumber),
+    
+    // Veritabanındaki masa numarasıyla kontrol et
+    let existingSession = await db.collection('sessions').findOne({
+      tableNumber: table.number,  // Veritabanındaki tip ne ise (string veya number)
       status: 'active',
       expiryTime: { $gt: new Date() }
     })
     
+    // String olarak da kontrol et
+    if (!existingSession && typeof table.number === 'number') {
+      existingSession = await db.collection('sessions').findOne({
+        tableNumber: table.number.toString(),
+        status: 'active',
+        expiryTime: { $gt: new Date() }
+      })
+    }
+    
+    // Case-insensitive regex ile son şans
+    if (!existingSession) {
+      existingSession = await db.collection('sessions').findOne({
+        tableNumber: { 
+          $regex: new RegExp(`^${table.number}$`, 'i') 
+        },
+        status: 'active',
+        expiryTime: { $gt: new Date() }
+      })
+    }
+    
     if (existingSession) {
+      console.log('♻️ Existing session found:', existingSession.sessionId)
+      
       // Mevcut session var - device'ı kaydet
       const deviceRegistration = await registerDevice(
         existingSession.sessionId,
@@ -100,7 +151,7 @@ export async function POST(request) {
     }
     
     // ============================================
-    // Yeni Session Oluştur
+    // 🔥 YENİ SESSION OLUŞTUR
     // ============================================
     const sessionId = randomUUID()
     const now = new Date()
@@ -109,7 +160,7 @@ export async function POST(request) {
     const newSession = {
       sessionId,
       tableId: table._id,
-      tableNumber: parseInt(tableNumber),
+      tableNumber: table.number,  // 🔥 Veritabanındaki tipi kullan (string veya number)
       status: 'active',
       
       // Zaman bilgileri
@@ -180,11 +231,13 @@ export async function POST(request) {
       }
     )
     
+    console.log('✅ New session created:', sessionId, 'for table:', table.number)
+    
     return NextResponse.json({
       success: true,
       session: {
         sessionId,
-        tableNumber: parseInt(tableNumber),
+        tableNumber: table.number,  // Orijinal tipi döndür
         expiryTime,
         startTime: now,
         orderCount: 0,
@@ -196,7 +249,7 @@ export async function POST(request) {
     })
     
   } catch (error) {
-    console.error('Session creation error:', error)
+    console.error('❌ Session creation error:', error)
     return NextResponse.json({
       success: false,
       error: 'Oturum oluşturulamadı'

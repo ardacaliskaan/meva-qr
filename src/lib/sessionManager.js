@@ -84,7 +84,7 @@ export function getDeviceInfo() {
  */
 export class SessionManager {
   constructor(tableNumber) {
-    this.tableNumber = tableNumber
+  this.tableNumber = tableNumber.toString().toUpperCase() // 🔥 Büyük harfe çevir
     this.storageKey = `session_table_${tableNumber}`
     this.deviceInfo = getDeviceInfo()
   }
@@ -190,10 +190,10 @@ export class SessionManager {
 const response = await fetch(apiPath('/api/sessions'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tableNumber: this.tableNumber,
-          deviceInfo: this.deviceInfo
-        })
+body: JSON.stringify({
+  tableNumber: this.tableNumber.toString(),  // String olarak gönder
+  deviceInfo: this.deviceInfo
+})
       })
       
       const data = await response.json()
@@ -226,11 +226,11 @@ const response = await fetch(apiPath('/api/sessions'), {
    * @param {string} sessionId - Session ID
    * @returns {Promise<Object>} Validation result
    */
-  async validateSession(sessionId) {
-    try {
-      const response = await fetch(
-        `/api/sessions?sessionId=${sessionId}&fingerprint=${this.deviceInfo.fingerprint}`
-      )
+async validateSession(sessionId) {
+  try {
+    const response = await fetch(
+      apiPath(`/api/sessions?sessionId=${sessionId}&fingerprint=${this.deviceInfo.fingerprint}`)
+    )
       
       const data = await response.json()
       return data

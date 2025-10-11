@@ -423,7 +423,7 @@ export async function POST(request) {
         tableQuery = { _id: new ObjectId(data.tableId) }
       } else {
         // Masa numarası formatında (string veya number)
-        tableQuery = { number: parseInt(data.tableId) }
+  tableQuery = { number: data.tableId.toString() }  // ✅ DOĞRU
       }
       
       console.log('Table query:', tableQuery) // Debug
@@ -561,8 +561,11 @@ export async function POST(request) {
         tableQuery = { _id: new ObjectId(data.tableId) }
       } else {
         // Masa numarası formatında
-        tableQuery = { number: parseInt(data.tableId) }
-      }
+tableQuery = { 
+  number: { 
+    $regex: new RegExp(`^${data.tableId.toString()}$`, 'i') 
+  }
+}      }
       
       await db.collection('tables').updateOne(
         tableQuery,
@@ -617,7 +620,7 @@ export async function PUT(request) {
       // 🔐 YENİ: Masa kapatılırken session'ı da kapat
       await db.collection('sessions').updateOne(
         { 
-          tableNumber: parseInt(tableNumber),
+          tableNumber: tableNumber.toString(),
           status: 'active'
         },
         {
@@ -635,7 +638,7 @@ export async function PUT(request) {
       const activeOrders = await db.collection('orders')
         .find({
           $or: [
-            { tableNumber: parseInt(tableNumber) },
+            { tableNumber: tableNumber.toString() },
             { tableId: tableNumber.toString() }
           ],
           status: { 
@@ -657,7 +660,7 @@ export async function PUT(request) {
       const bulkUpdateResult = await db.collection('orders').updateMany(
         {
           $or: [
-            { tableNumber: parseInt(tableNumber) },
+            { tableNumber: tableNumber.toString() },
             { tableId: tableNumber.toString() }
           ],
           status: { 
@@ -680,7 +683,7 @@ export async function PUT(request) {
       await db.collection('tables').updateOne(
         { 
           $or: [
-            { number: parseInt(tableNumber) },
+            { number: tableNumber.toString()  },
             { _id: tableNumber.length === 24 ? new ObjectId(tableNumber) : null }
           ].filter(Boolean)
         },
@@ -895,7 +898,7 @@ case 'updateItemStatus':
       const activeOrdersCount = await db.collection('orders').countDocuments({
         $or: [
           { tableId: existingOrder.tableId },
-          { tableNumber: parseInt(existingOrder.tableId) }
+          { tableNumber: existingOrder.tableId.toString() }
         ],
         status: { $nin: [ORDER_STATUSES.COMPLETED, ORDER_STATUSES.CANCELLED] }
       })
@@ -907,7 +910,7 @@ case 'updateItemStatus':
         if (existingOrder.tableId.length === 24 && /^[0-9a-fA-F]{24}$/.test(existingOrder.tableId)) {
           tableQuery = { _id: new ObjectId(existingOrder.tableId) }
         } else {
-          tableQuery = { number: parseInt(existingOrder.tableId) }
+          tableQuery = { number: existingOrder.tableId.toString() }
         }
         
         await db.collection('tables').updateOne(
