@@ -35,6 +35,23 @@ export const siteUrl = (path = '') => {
 };
 
 /**
+ * API endpoint path helper
+ * API routes ASLA basePath kullanmaz (Next.js kuralı)
+ */
+export const apiEndpoint = (path) => {
+  // API routes da basePath kullanır (Next.js subdirectory deployment)
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  
+  // Path zaten base path ile başlıyorsa tekrar ekleme
+  if (basePath && path.startsWith(basePath)) {
+    return path;
+  }
+  
+  return `${basePath}${normalizedPath}`;
+};
+
+/**
  * Asset URL helper (for images, etc.)
  */
 export const assetUrl = (path) => {

@@ -12,6 +12,7 @@ import {
 } from '@/lib/models/menu'
 
 // GET - Menü öğelerini getir
+// GET - Menü öğelerini getir
 export async function GET(request) {
   try {
     const client = await clientPromise
@@ -21,7 +22,13 @@ export async function GET(request) {
     
     // Query parameters
     const page = parseInt(searchParams.get('page')) || 1
-    const limit = parseInt(searchParams.get('limit')) || 50
+    
+    // 🔥 YENİ: Admin paneli için tüm kayıtları çek
+    const isAdmin = searchParams.get('enrich') === 'true' || searchParams.get('stats') === 'true'
+    const limit = isAdmin 
+      ? 0  // 0 = limit yok, tüm kayıtlar
+      : (parseInt(searchParams.get('limit')) || 50) // Müşteri menüsü için limit
+    
     const sortBy = searchParams.get('sortBy') || 'sortOrder'
     const sortOrder = searchParams.get('sortOrder') || 'asc'
     const includeStats = searchParams.get('stats') === 'true'
@@ -44,17 +51,19 @@ export async function GET(request) {
     // Sıralamayı oluştur
     const sort = buildMenuSort(sortBy, sortOrder)
     
-    // Pagination hesaplama
-    const skip = (page - 1) * limit
+    // Pagination hesaplama (sadece limit varsa)
+    const skip = limit > 0 ? (page - 1) * limit : 0
     
     // Menü öğelerini getir
+    const query = db.collection('menu').find(filter).sort(sort)
+    
+    // Limit varsa uygula
+    const queryWithLimit = limit > 0 
+      ? query.skip(skip).limit(limit)
+      : query.skip(skip) // Limit yok, tümünü çek
+    
     const [menuItems, totalCount] = await Promise.all([
-      db.collection('menu')
-        .find(filter)
-        .sort(sort)
-        .skip(skip)
-        .limit(limit)
-        .toArray(),
+      queryWithLimit.toArray(),
       db.collection('menu').countDocuments(filter)
     ])
     
@@ -71,8 +80,8 @@ export async function GET(request) {
       pagination: {
         total: totalCount,
         page,
-        limit,
-        pages: Math.ceil(totalCount / limit)
+        limit: limit || totalCount, // Limit yoksa total'i göster
+        pages: limit > 0 ? Math.ceil(totalCount / limit) : 1
       }
     }
     

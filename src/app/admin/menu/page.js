@@ -562,12 +562,17 @@ const url = apiPath('/api/admin/menu')
         ) : (
           filteredItems.map((item, index) => (
             <motion.div
-              key={item.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, delay: index * 0.1 }}
-              className="bg-white rounded-2xl shadow-sm border border-gray-200 hover:shadow-lg hover:border-gray-300 transition-all duration-200 overflow-hidden group"
-            >
+  key={item.id}
+  initial={{ opacity: 0, y: 20 }}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ duration: 0.4, delay: index * 0.1 }}
+  onClick={() => {
+    if (window.innerWidth < 768) {
+      openEditModal(item)
+    }
+  }}
+  className="bg-white rounded-2xl shadow-sm border border-gray-200 hover:shadow-lg hover:border-gray-300 transition-all duration-200 overflow-hidden group md:cursor-default cursor-pointer"
+>
               {/* Image */}
               <div className="relative h-48 bg-gradient-to-br from-amber-100 to-orange-100">
                 {item.image ? (

@@ -5,7 +5,7 @@ const nextConfig = {
   
   // Image optimization için
   images: {
-    unoptimized: true,  // ← false'dan true'ya değiştir!
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: 'https',
@@ -16,6 +16,13 @@ const nextConfig = {
 
   // Trailing slash
   trailingSlash: false,
+
+  // 🔥 Body size limiti (upload için)
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '10mb'
+    }
+  },
 }
 
 export default nextConfig

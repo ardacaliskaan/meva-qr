@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Upload, X, ImageIcon, Loader2, Check, AlertCircle } from 'lucide-react'
 import Image from 'next/image'
 import toast from 'react-hot-toast'
-import { apiPath } from '@/lib/api'
+import { apiPath, apiEndpoint } from '@/lib/api'
 
 export default function ImageUpload({ 
   currentImage = null, 
@@ -65,7 +65,7 @@ export default function ImageUpload({
       formData.append('file', file)
 
       console.log('📤 Uploading image...')
-      const response = await fetch(apiPath('/api/upload'), {
+const response = await fetch(apiEndpoint('/api/upload'), {
         method: 'POST',
         body: formData,
         credentials: 'include' // CRITICAL: Cookie gönder

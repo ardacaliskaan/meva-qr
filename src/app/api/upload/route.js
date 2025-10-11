@@ -4,6 +4,10 @@ import { constants } from 'fs'
 import path from 'path'
 import sharp from 'sharp'
 
+// 🔥 CRITICAL: Next.js 15 App Router için body size limiti
+export const runtime = 'nodejs'
+export const maxDuration = 60 // 60 saniye timeout
+
 export async function POST(request) {
   try {
     const formData = await request.formData()
@@ -80,7 +84,7 @@ export async function POST(request) {
       console.log('✅ Resim işlendi ve kaydedildi:', filepath)
 
       // Public URL oluştur
-const imageUrl = `${process.env.NEXT_PUBLIC_BASE_PATH || ''}/uploads/menu/${filename}`
+      const imageUrl = `${process.env.NEXT_PUBLIC_BASE_PATH || ''}/uploads/menu/${filename}`
 
       // Dosya boyutunu hesapla
       const processedSize = processedImage.length
