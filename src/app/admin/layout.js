@@ -1,8 +1,8 @@
-// src/app/admin/layout.js - Ultra Professional Version
+// src/app/admin/layout.js - Real Notifications Version (Fixed)
 
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion'
@@ -28,7 +28,9 @@ import {
   ChevronDown,
   User,
   HelpCircle,
-  Activity
+  Activity,
+  Clock,
+  CheckCircle
 } from 'lucide-react'
 
 const menuItems = [
@@ -50,7 +52,17 @@ export default function AdminLayout({ children }) {
   const [notificationOpen, setNotificationOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [darkMode, setDarkMode] = useState(false)
-  const [notifications, setNotifications] = useState(3)
+  
+  // 🆕 REAL NOTIFICATIONS STATE
+  const [notifications, setNotifications] = useState(0)
+  const [notificationsList, setNotificationsList] = useState([])
+  const [recentOrders, setRecentOrders] = useState([])
+  const previousOrderCountRef = useRef(0)
+
+  // Debug: notifications değişikliklerini logla
+  useEffect(() => {
+    console.log('🔔 [LAYOUT] Notifications state changed:', notifications)
+  }, [notifications])
   
   const router = useRouter()
   const pathname = usePathname()
@@ -72,6 +84,162 @@ export default function AdminLayout({ children }) {
     checkScreenSize()
     window.addEventListener('resize', checkScreenSize)
     return () => window.removeEventListener('resize', checkScreenSize)
+  }, [])
+
+  // 🆕 LOAD REAL NOTIFICATIONS
+  const loadNotifications = useCallback(async () => {
+    try {
+      console.log('🔍 [LAYOUT] Loading notifications...')
+      
+      // Aktif (tamamlanmamış) siparişleri çek
+      const params = new URLSearchParams({
+        groupByTable: 'true',  // ✅ BU ÖNEMLİ! originalOrders için gerekli
+        excludeCompleted: 'true',
+        sortBy: 'createdAt',
+        sortOrder: 'desc',
+        limit: '10'
+      })
+
+      const res = await fetch(apiPath(`/api/orders?${params}`))
+      const data = await res.json()
+
+      console.log('📦 [LAYOUT] API Response:', {
+        success: data.success,
+        ordersCount: data.originalOrders?.length,
+        orders: data.originalOrders
+      })
+
+      if (data.success) {
+        // ✅ FALLBACK: originalOrders yoksa orders kullan
+        const orders = data.originalOrders || data.orders || []
+        setRecentOrders(orders)
+
+        console.log('📋 [LAYOUT] Orders data:', {
+          hasOriginalOrders: !!data.originalOrders,
+          hasOrders: !!data.orders,
+          finalCount: orders.length,
+          sampleOrder: orders[0]
+        })
+
+        // Yeni sipariş kontrolü
+        const currentCount = orders.length
+        const previousCount = previousOrderCountRef.current
+
+        console.log('🔔 [LAYOUT] Count Check:', {
+          currentCount,
+          previousCount,
+          isFirstLoad: previousCount === 0,
+          hasNewOrders: currentCount > previousCount
+        })
+
+        // İlk yükleme değilse ve artış varsa
+        if (previousCount > 0 && currentCount > previousCount) {
+          const newOrdersCount = currentCount - previousCount
+          console.log('✅ [LAYOUT] NEW ORDERS DETECTED!', newOrdersCount)
+          
+          setNotifications(prev => {
+            const newVal = prev + newOrdersCount
+            console.log('🔔 [LAYOUT] Notification badge:', prev, '->', newVal)
+            return newVal
+          })
+          
+          // Yeni siparişleri bildirim listesine ekle
+          const newOrders = orders.slice(0, newOrdersCount)
+          const newNotifications = newOrders.map(order => ({
+            id: order._id,
+            title: '🆕 Yeni Sipariş',
+            message: `Masa ${order.tableNumber} - ${order.items?.length || 0} ürün`,
+            time: getTimeAgo(order.createdAt),
+            timestamp: order.createdAt,
+            unread: true,
+            type: 'order',
+            orderId: order._id,
+            tableNumber: order.tableNumber
+          }))
+
+          console.log('📋 [LAYOUT] Adding notifications:', newNotifications)
+          setNotificationsList(prev => [...newNotifications, ...prev].slice(0, 20))
+        } else {
+          console.log('ℹ️ [LAYOUT] No new orders (first load or no increase)')
+        }
+
+        // Güncel sayıyı kaydet
+        console.log('💾 [LAYOUT] Saving count to ref:', currentCount)
+        previousOrderCountRef.current = currentCount
+        
+        // localStorage'a kaydet
+        try {
+          localStorage.setItem('adminLastOrderCount', currentCount.toString())
+          console.log('💾 [LAYOUT] Saved to localStorage:', currentCount)
+        } catch (e) {
+          console.error('localStorage save error:', e)
+        }
+      }
+    } catch (error) {
+      console.error('❌ [LAYOUT] Load notifications error:', error)
+    }
+  }, [])
+
+  // 🆕 TIME AGO HELPER
+  const getTimeAgo = (date) => {
+    const seconds = Math.floor((new Date() - new Date(date)) / 1000)
+    if (seconds < 60) return 'Az önce'
+    const minutes = Math.floor(seconds / 60)
+    if (minutes < 60) return `${minutes} dk önce`
+    const hours = Math.floor(minutes / 60)
+    if (hours < 24) return `${hours} saat önce`
+    return `${Math.floor(hours / 24)} gün önce`
+  }
+
+  // 🆕 AUTO-REFRESH NOTIFICATIONS (15 saniye)
+  useEffect(() => {
+    console.log('🔄 [LAYOUT] Setting up auto-refresh (15s interval)')
+    loadNotifications()
+    const interval = setInterval(() => {
+      console.log('⏰ [LAYOUT] Auto-refresh triggered')
+      loadNotifications()
+    }, 15000)
+    return () => {
+      console.log('🛑 [LAYOUT] Cleaning up interval')
+      clearInterval(interval)
+    }
+  }, [loadNotifications])
+
+  // 🆕 İLK YÜKLEME - localStorage'dan son sayıyı al
+  useEffect(() => {
+    try {
+      const savedCount = localStorage.getItem('adminLastOrderCount')
+      console.log('📂 [LAYOUT] Loading from localStorage:', savedCount)
+      
+      if (savedCount) {
+        previousOrderCountRef.current = parseInt(savedCount)
+        console.log('✅ [LAYOUT] Loaded previousCount:', previousOrderCountRef.current)
+      } else {
+        console.log('⚠️ [LAYOUT] No saved count, starting fresh')
+      }
+    } catch (error) {
+      console.error('❌ [LAYOUT] localStorage error:', error)
+    }
+  }, [])
+
+  // 🆕 BİLDİRİM TIKLANDIĞINDA
+  const handleNotificationClick = useCallback((notif) => {
+    if (notif.type === 'order' && notif.orderId) {
+      router.push('/admin/orders')
+      setNotificationOpen(false)
+      
+      // Bu bildirimi okundu işaretle
+      setNotificationsList(prev => 
+        prev.map(n => n.id === notif.id ? { ...n, unread: false } : n)
+      )
+      setNotifications(prev => Math.max(0, prev - 1))
+    }
+  }, [router])
+
+  // 🆕 TÜM BİLDİRİMLERİ OKUNDU İŞARETLE
+  const markAllAsRead = useCallback(() => {
+    setNotificationsList(prev => prev.map(n => ({ ...n, unread: false })))
+    setNotifications(0)
   }, [])
 
   // Close sidebar on route change
@@ -100,12 +268,10 @@ export default function AdminLayout({ children }) {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyPress = (e) => {
-      // Cmd/Ctrl + K for search
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
         setSearchOpen(true)
       }
-      // Escape to close
       if (e.key === 'Escape') {
         setSidebarOpen(false)
         setSearchOpen(false)
@@ -131,17 +297,19 @@ export default function AdminLayout({ children }) {
     setSidebarOpen(prev => !prev)
   }, [])
 
-  // Get current page title
   const currentPageTitle = useMemo(() => {
     return menuItems.find(item => item.href === pathname)?.label || 'Admin Panel'
   }, [pathname])
 
-  // Mock notifications
-  const notificationsList = [
-    { id: 1, title: 'Yeni Sipariş', message: 'Masa 5 için yeni sipariş', time: '2 dk önce', unread: true },
-    { id: 2, title: 'Stok Uyarısı', message: 'Malzeme stoğu azalıyor', time: '15 dk önce', unread: true },
-    { id: 3, title: 'Sistem Güncelleme', message: 'Yeni özellikler eklendi', time: '1 saat önce', unread: false },
-  ]
+  // 🆕 STATUS ICON HELPER
+  const getStatusIcon = (status) => {
+    switch (status) {
+      case 'pending': return Clock
+      case 'preparing': return ChefHat
+      case 'ready': return CheckCircle
+      default: return ShoppingCart
+    }
+  }
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
@@ -178,87 +346,75 @@ export default function AdminLayout({ children }) {
             style={isMobile ? { x, opacity } : {}}
             className={`
               ${isMobile ? 'fixed' : 'relative'} 
-              z-50 flex flex-col w-72 h-full bg-white border-r border-gray-200 shadow-2xl
+              inset-y-0 left-0 z-50 w-72
+              bg-white border-r border-gray-200 
+              flex flex-col shadow-2xl
             `}
           >
-            {/* Header */}
-            <div className="flex items-center justify-between p-6 border-b border-gray-200">
-              <Link href="/admin" className="flex items-center space-x-3 group">
-                <motion.div 
-                  whileHover={{ scale: 1.05, rotate: 5 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="w-11 h-11 bg-gradient-to-br from-blue-600 via-purple-600 to-pink-500 rounded-xl flex items-center justify-center shadow-lg"
-                >
+            {/* Logo Section */}
+            <div className="h-16 flex items-center justify-between px-6 border-b border-gray-100">
+              <motion.div 
+                className="flex items-center gap-3"
+                whileHover={{ scale: 1.02 }}
+              >
+                <div className="w-10 h-10 bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl flex items-center justify-center shadow-lg">
                   <ChefHat className="w-6 h-6 text-white" />
-                </motion.div>
-                <div>
-                  <h1 className="text-xl font-bold text-gray-900 group-hover:text-blue-600 transition-colors">
-                    Meva Cafe
-                  </h1>
-                  <p className="text-xs text-gray-500 flex items-center gap-1">
-                    <Activity className="w-3 h-3" />
-                    Yetkili Panel
-                  </p>
                 </div>
-              </Link>
+                <div>
+                  <h1 className="font-bold text-gray-900 text-lg">Restaurant</h1>
+                  <p className="text-xs text-gray-500">Admin Panel</p>
+                </div>
+              </motion.div>
+              
               {isMobile && (
                 <motion.button
                   whileTap={{ scale: 0.9 }}
                   onClick={() => setSidebarOpen(false)}
-                  className="p-2 rounded-lg hover:bg-gray-100 transition-colors touch-manipulation"
+                  className="p-2 hover:bg-gray-100 rounded-xl transition-colors"
                 >
-                  <X className="w-5 h-5 text-gray-500" />
+                  <X className="w-5 h-5 text-gray-600" />
                 </motion.button>
               )}
             </div>
 
-            {/* Search Bar in Sidebar */}
-            <div className="px-4 pt-4 pb-2">
-              <button
-                onClick={() => setSearchOpen(true)}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors group"
-              >
-                <Search className="w-4 h-4 text-gray-400 group-hover:text-gray-600" />
-                <span className="text-sm text-gray-500 group-hover:text-gray-700">Ara...</span>
-                <kbd className="ml-auto text-xs text-gray-400 bg-white px-2 py-1 rounded border border-gray-200">
-                  ⌘K
-                </kbd>
-              </button>
-            </div>
-
             {/* Navigation */}
-            <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
+            <nav className="flex-1 overflow-y-auto p-4 space-y-1">
               {menuItems.map((item) => {
                 const isActive = pathname === item.href
                 const Icon = item.icon
-                
+
                 return (
                   <Link key={item.href} href={item.href}>
                     <motion.div
                       whileHover={{ x: 4 }}
                       whileTap={{ scale: 0.98 }}
                       className={`
-                        relative flex items-center space-x-3 px-4 py-3.5 rounded-xl transition-all duration-200 group touch-manipulation
+                        flex items-center gap-3 px-4 py-3 rounded-xl
+                        transition-all duration-200 relative group
                         ${isActive 
-                          ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg shadow-blue-500/30' 
-                          : 'text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+                          ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-lg shadow-amber-500/30' 
+                          : 'text-gray-700 hover:bg-gray-100'
                         }
                       `}
                     >
-                      <Icon className={`w-5 h-5 ${isActive ? 'text-white' : 'text-gray-500 group-hover:text-gray-700'}`} />
+                      <Icon className={`w-5 h-5 ${isActive ? 'text-white' : 'text-gray-600 group-hover:text-amber-600'}`} />
                       <span className="font-medium flex-1">{item.label}</span>
                       
                       {item.badge === 'hot' && (
-                        <span className="flex items-center justify-center px-2 py-0.5 text-xs font-bold bg-red-500 text-white rounded-full animate-pulse">
+                        <motion.span 
+                          animate={{ scale: [1, 1.2, 1] }}
+                          transition={{ repeat: Infinity, duration: 2 }}
+                          className="px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full"
+                        >
                           HOT
-                        </span>
+                        </motion.span>
                       )}
-                      
+
                       {isActive && (
                         <motion.div
-                          layoutId="activeIndicator"
-                          className="w-1.5 h-1.5 bg-white rounded-full"
-                          transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                          layoutId="activeTab"
+                          className="absolute inset-0 bg-gradient-to-r from-amber-500 to-orange-600 rounded-xl -z-10"
+                          transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
                         />
                       )}
                     </motion.div>
@@ -267,24 +423,17 @@ export default function AdminLayout({ children }) {
               })}
             </nav>
 
-            {/* Footer */}
-            <div className="p-4 border-t border-gray-200 space-y-2">
-              <motion.button 
-                whileTap={{ scale: 0.98 }}
-                className="flex items-center space-x-3 w-full px-4 py-3 text-gray-700 hover:bg-gray-50 rounded-xl transition-all touch-manipulation group"
-              >
-                <Settings className="w-5 h-5 text-gray-500 group-hover:text-gray-700 group-hover:rotate-90 transition-transform duration-300" />
-                <span className="font-medium">Ayarlar</span>
-              </motion.button>
-              
-              <motion.button 
-                whileTap={{ scale: 0.98 }}
-                onClick={handleLogout}
-                className="flex items-center space-x-3 w-full px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl transition-all touch-manipulation group"
-              >
-                <LogOut className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                <span className="font-medium">Çıkış Yap</span>
-              </motion.button>
+            {/* User Section */}
+            <div className="p-4 border-t border-gray-100">
+              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
+                  <User className="w-5 h-5 text-white" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-gray-900 text-sm truncate">Admin User</p>
+                  <p className="text-xs text-gray-500">admin@restaurant.com</p>
+                </div>
+              </div>
             </div>
           </motion.aside>
         )}
@@ -292,45 +441,40 @@ export default function AdminLayout({ children }) {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Header */}
-        <header className="flex items-center justify-between px-4 sm:px-6 py-4 bg-white border-b border-gray-200 shadow-sm z-30 touch-manipulation">
-          <div className="flex items-center space-x-4">
+        {/* Top Bar */}
+        <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 md:px-6 shadow-sm z-30">
+          <div className="flex items-center gap-4">
             <motion.button
               whileTap={{ scale: 0.9 }}
               onClick={toggleSidebar}
-              className="p-2.5 rounded-xl hover:bg-gray-100 transition-colors lg:hidden touch-manipulation"
+              className="lg:hidden p-2 hover:bg-gray-100 rounded-xl transition-colors"
             >
               <MenuIcon className="w-6 h-6 text-gray-600" />
             </motion.button>
-            
-            <div>
-              <h2 className="text-xl sm:text-2xl font-bold text-gray-900">
-                {currentPageTitle}
-              </h2>
-              <p className="text-xs sm:text-sm text-gray-500 hidden sm:block">
-                Hoş geldiniz 👋
-              </p>
+
+            <div className="hidden lg:block">
+              <h2 className="text-xl font-bold text-gray-900">{currentPageTitle}</h2>
             </div>
           </div>
 
-          <div className="flex items-center space-x-2 sm:space-x-3">
-            {/* Search Button - Desktop */}
+          {/* Action Buttons */}
+          <div className="flex items-center gap-2">
+            {/* Search */}
             <motion.button
               whileTap={{ scale: 0.9 }}
               onClick={() => setSearchOpen(true)}
-              className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors"
+              className="hidden md:flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors text-gray-600"
             >
-              <Search className="w-5 h-5 text-gray-600" />
-              <kbd className="hidden md:inline-block text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded border border-gray-200">
-                ⌘K
-              </kbd>
+              <Search className="w-4 h-4" />
+              <span className="text-sm">Ara...</span>
+              <kbd className="px-2 py-0.5 bg-white rounded text-xs font-mono">⌘K</kbd>
             </motion.button>
 
             {/* Dark Mode Toggle */}
             <motion.button
               whileTap={{ scale: 0.9 }}
               onClick={() => setDarkMode(!darkMode)}
-              className="p-2.5 rounded-xl hover:bg-gray-100 transition-colors touch-manipulation"
+              className="p-2.5 rounded-xl hover:bg-gray-100 transition-colors"
             >
               {darkMode ? (
                 <Sun className="w-5 h-5 text-yellow-500" />
@@ -343,7 +487,10 @@ export default function AdminLayout({ children }) {
             <div className="relative notification-menu">
               <motion.button
                 whileTap={{ scale: 0.9 }}
-                onClick={() => setNotificationOpen(!notificationOpen)}
+                onClick={() => {
+                  console.log('🔔 [LAYOUT] Bell clicked. Current notifications:', notifications)
+                  setNotificationOpen(!notificationOpen)
+                }}
                 className="notification-button relative p-2.5 rounded-xl hover:bg-gray-100 transition-colors touch-manipulation"
               >
                 <Bell className="w-5 h-5 text-gray-600" />
@@ -368,62 +515,86 @@ export default function AdminLayout({ children }) {
                     className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden z-50"
                   >
                     <div className="p-4 border-b border-gray-100">
-                      <h3 className="font-semibold text-gray-900">Bildirimler</h3>
-                      <p className="text-xs text-gray-500 mt-1">{notifications} yeni bildirim</p>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="font-semibold text-gray-900">Bildirimler</h3>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {notifications} yeni bildirim
+                          </p>
+                        </div>
+                        {notifications > 0 && (
+                          <button
+                            onClick={markAllAsRead}
+                            className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                          >
+                            Tümünü Okundu İşaretle
+                          </button>
+                        )}
+                      </div>
                     </div>
+
                     <div className="max-h-96 overflow-y-auto">
-                      {notificationsList.map((notif) => (
-                        <motion.div
-                          key={notif.id}
-                          whileHover={{ backgroundColor: '#f9fafb' }}
-                          className="p-4 border-b border-gray-50 cursor-pointer"
-                        >
-                          <div className="flex items-start gap-3">
-                            {notif.unread && (
-                              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0" />
-                            )}
-                            <div className="flex-1 min-w-0">
-                              <p className="font-medium text-sm text-gray-900">{notif.title}</p>
-                              <p className="text-xs text-gray-600 mt-1">{notif.message}</p>
-                              <p className="text-xs text-gray-400 mt-2">{notif.time}</p>
-                            </div>
-                          </div>
-                        </motion.div>
-                      ))}
+                      {notificationsList.length === 0 ? (
+                        <div className="p-8 text-center">
+                          <Bell className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                          <p className="text-gray-500 text-sm">Henüz bildirim yok</p>
+                        </div>
+                      ) : (
+                        notificationsList.map((notif) => {
+                          const StatusIcon = getStatusIcon(notif.status)
+                          return (
+                            <motion.div
+                              key={notif.id}
+                              whileHover={{ backgroundColor: '#f9fafb' }}
+                              onClick={() => handleNotificationClick(notif)}
+                              className="p-4 border-b border-gray-50 cursor-pointer"
+                            >
+                              <div className="flex items-start gap-3">
+                                {notif.unread && (
+                                  <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0" />
+                                )}
+                                <div className="flex-shrink-0">
+                                  <div className="w-10 h-10 bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl flex items-center justify-center">
+                                    <StatusIcon className="w-5 h-5 text-white" />
+                                  </div>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-medium text-sm text-gray-900">{notif.title}</p>
+                                  <p className="text-xs text-gray-600 mt-1">{notif.message}</p>
+                                  <p className="text-xs text-gray-400 mt-2">{notif.time}</p>
+                                </div>
+                              </div>
+                            </motion.div>
+                          )
+                        })
+                      )}
                     </div>
+
                     <div className="p-3 border-t border-gray-100">
-                      <button className="w-full text-sm text-blue-600 hover:text-blue-700 font-medium">
-                        Tümünü Gör
-                      </button>
+                      <Link
+                        href="/admin/orders"
+                        onClick={() => setNotificationOpen(false)}
+                        className="block w-full text-center text-sm text-blue-600 hover:text-blue-700 font-medium py-2 hover:bg-blue-50 rounded-lg transition-colors"
+                      >
+                        Tüm Siparişleri Gör
+                      </Link>
                     </div>
                   </motion.div>
                 )}
               </AnimatePresence>
             </div>
 
-            {/* Help */}
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              className="hidden md:block p-2.5 rounded-xl hover:bg-gray-100 transition-colors"
-            >
-              <HelpCircle className="w-5 h-5 text-gray-600" />
-            </motion.button>
-            
             {/* Profile Menu */}
             <div className="relative profile-menu">
               <motion.button
-                whileTap={{ scale: 0.95 }}
+                whileTap={{ scale: 0.9 }}
                 onClick={() => setProfileMenuOpen(!profileMenuOpen)}
-                className="profile-button flex items-center space-x-2 sm:space-x-3 pl-3 sm:pl-4 border-l border-gray-200 hover:bg-gray-50 rounded-r-xl transition-colors pr-2 py-1 touch-manipulation"
+                className="profile-button flex items-center gap-2 p-2 hover:bg-gray-100 rounded-xl transition-colors"
               >
-                <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center shadow-md">
-                  <span className="text-white text-sm font-bold">A</span>
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                  <User className="w-4 h-4 text-white" />
                 </div>
-                <div className="hidden sm:block text-left">
-                  <p className="text-sm font-semibold text-gray-900">Admin</p>
-                  <p className="text-xs text-gray-500">Yönetici</p>
-                </div>
-                <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${profileMenuOpen ? 'rotate-180' : ''}`} />
+                <ChevronDown className="w-4 h-4 text-gray-600 hidden sm:block" />
               </motion.button>
 
               <AnimatePresence>
@@ -432,41 +603,31 @@ export default function AdminLayout({ children }) {
                     initial={{ opacity: 0, y: 10, scale: 0.95 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                    transition={{ duration: 0.2 }}
-                    className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden z-50"
+                    className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden z-50"
                   >
-                    <div className="p-4 border-b border-gray-100">
-                      <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
-                          <span className="text-white font-bold">A</span>
-                        </div>
-                        <div>
-                          <p className="font-semibold text-gray-900">Admin User</p>
-                          <p className="text-xs text-gray-500">admin@mevacafe.com</p>
-                        </div>
-                      </div>
+                    <div className="p-3 border-b border-gray-100">
+                      <p className="font-semibold text-gray-900 text-sm">Admin User</p>
+                      <p className="text-xs text-gray-500">admin@restaurant.com</p>
                     </div>
-                    <div className="p-2">
-                      <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors text-left">
-                        <User className="w-4 h-4 text-gray-500" />
-                        <span className="text-sm text-gray-700">Profil</span>
+
+                    <div className="py-2">
+                      <button className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                        <Settings className="w-4 h-4" />
+                        Ayarlar
                       </button>
-                      <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors text-left">
-                        <Settings className="w-4 h-4 text-gray-500" />
-                        <span className="text-sm text-gray-700">Ayarlar</span>
-                      </button>
-                      <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition-colors text-left">
-                        <HelpCircle className="w-4 h-4 text-gray-500" />
-                        <span className="text-sm text-gray-700">Yardım</span>
+                      <button className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                        <HelpCircle className="w-4 h-4" />
+                        Yardım
                       </button>
                     </div>
+
                     <div className="p-2 border-t border-gray-100">
                       <button
                         onClick={handleLogout}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-red-50 transition-colors text-left text-red-600"
+                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg"
                       >
                         <LogOut className="w-4 h-4" />
-                        <span className="text-sm font-medium">Çıkış Yap</span>
+                        Çıkış Yap
                       </button>
                     </div>
                   </motion.div>
@@ -476,54 +637,48 @@ export default function AdminLayout({ children }) {
           </div>
         </header>
 
-        {/* Search Modal */}
-        <AnimatePresence>
-          {searchOpen && (
-            <>
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setSearchOpen(false)}
-                className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50"
-              />
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: -20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: -20 }}
-                className="fixed top-20 left-1/2 -translate-x-1/2 w-full max-w-2xl z-50 px-4"
-              >
-                <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden">
-                  <div className="flex items-center gap-3 p-4 border-b border-gray-100">
-                    <Search className="w-5 h-5 text-gray-400" />
-                    <input
-                      type="text"
-                      placeholder="Menü, sipariş, masa ara..."
-                      autoFocus
-                      className="flex-1 outline-none text-gray-900 placeholder-gray-400"
-                    />
-                    <kbd className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded border border-gray-200">
-                      ESC
-                    </kbd>
-                  </div>
-                  <div className="p-4">
-                    <p className="text-sm text-gray-500 text-center py-8">
-                      Arama yapmak için yazın...
-                    </p>
-                  </div>
-                </div>
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
-
         {/* Page Content */}
         <main className="flex-1 overflow-y-auto bg-gray-50">
-          <div className="h-full">
-            {children}
-          </div>
+          {children}
         </main>
       </div>
+
+      {/* Search Modal */}
+      <AnimatePresence>
+        {searchOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-start justify-center pt-20"
+            onClick={() => setSearchOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: -20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: -20 }}
+              className="w-full max-w-2xl mx-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+                <div className="flex items-center gap-3 p-4 border-b border-gray-200">
+                  <Search className="w-5 h-5 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Ara..."
+                    className="flex-1 outline-none text-gray-900 placeholder-gray-400"
+                    autoFocus
+                  />
+                  <kbd className="px-2 py-1 bg-gray-100 rounded text-xs font-mono text-gray-600">ESC</kbd>
+                </div>
+                <div className="p-4 text-center text-gray-500 text-sm">
+                  Arama özelliği yakında eklenecek...
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
