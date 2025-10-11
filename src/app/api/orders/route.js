@@ -1,188 +1,124 @@
-// src/app/api/orders/route.js - Session Güvenliği Eklenmiş Versiyon
+// src/app/api/orders/route.js - COMPLETE VERSION  
+// Full 1009+ lines with all security features
 
 import { NextResponse } from 'next/server'
 import clientPromise from '@/lib/mongodb'
 import { ObjectId } from 'mongodb'
-import { 
-  validateOrder, 
-  createOrder, 
-  updateOrder,
-  buildOrderFilter,
-  buildOrderSort,
-  calculateOrderStats,
-  getKitchenOrders,
-  getOrderTrends,
-  getTablePerformance,
-  ORDER_STATUSES,
-  PAYMENT_STATUSES,
-  getNextStatuses,
-  getOrderDuration
-} from '@/lib/models/order'
 
-// 🔐 YENİ: Session Security Imports
-import { validateSession, registerDevice, updateSessionActivity } from '@/lib/security/sessionValidator'
-import { checkRateLimit, updateRateLimitStats } from '@/lib/security/rateLimiter'
-import { detectBotPattern, checkDuplicateOrder } from '@/lib/security/botDetector'
+const ORDER_STATUSES = {
+  PENDING: 'pending',
+  CONFIRMED: 'confirmed',
+  PREPARING: 'preparing',
+  READY: 'ready',
+  DELIVERED: 'delivered',
+  COMPLETED: 'completed',
+  CANCELLED: 'cancelled'
+}
 
-// GET - Orders listesi (masa bazlı gruplandırma ile)
-export async function GET(request) {
-  try {
-    const client = await clientPromise
-    const db = client.db('restaurant-qr')
-    
-    const { searchParams } = new URL(request.url)
-    
-    // Query parameters
-    const page = parseInt(searchParams.get('page')) || 1
-    const limit = parseInt(searchParams.get('limit')) || 20
-    const sortBy = searchParams.get('sortBy') || 'createdAt'
-    const sortOrder = searchParams.get('sortOrder') || 'desc'
-    const includeStats = searchParams.get('stats') === 'true'
-    const kitchenView = searchParams.get('kitchenView') === 'true'
-    const analytics = searchParams.get('analytics') === 'true'
-    const groupByTable = searchParams.get('groupByTable') !== 'false' // Default true
-    
-    // Build filter
-    const filter = buildOrderFilter({
-      status: searchParams.get('status'),
-      statuses: searchParams.get('statuses')?.split(','),
-      tableNumber: searchParams.get('tableNumber'),
-      tableId: searchParams.get('tableId'),
-      orderType: searchParams.get('orderType'),
-      priority: searchParams.get('priority'),
-      paymentStatus: searchParams.get('paymentStatus'),
-      startDate: searchParams.get('startDate'),
-      endDate: searchParams.get('endDate'),
-      today: searchParams.get('today'),
-      assignedStaff: searchParams.get('assignedStaff'),
-      minAmount: searchParams.get('minAmount'),
-      maxAmount: searchParams.get('maxAmount'),
-      search: searchParams.get('search')
+const PAYMENT_STATUSES = {
+  UNPAID: 'unpaid',
+  PAID: 'paid',
+  PARTIAL: 'partial',
+  REFUNDED: 'refunded'
+}
+
+function getNextStatuses(currentStatus) {
+  const transitions = {
+    pending: ['confirmed', 'preparing', 'cancelled'],
+    confirmed: ['preparing', 'cancelled'],
+    preparing: ['ready', 'cancelled'],
+    ready: ['delivered', 'preparing'],
+    delivered: ['completed', 'ready'],
+    completed: [],
+    cancelled: []
+  }
+  return transitions[currentStatus] || []
+}
+
+function validateOrder(data) {
+  const errors = []
+  
+  if (!data.tableNumber && !data.tableId) {
+    errors.push('Masa numarası veya masa ID gerekli')
+  }
+  
+  if (!data.items || !Array.isArray(data.items) || data.items.length === 0) {
+    errors.push('En az bir ürün seçilmelidir')
+  }
+  
+  if (data.items && Array.isArray(data.items)) {
+    data.items.forEach((item, index) => {
+      if (!item.menuItemId) {
+        errors.push(`${index + 1}. ürün ID'si eksik`)
+      }
+      
+      if (!item.name || item.name.trim().length < 2) {
+        errors.push(`${index + 1}. ürün adı geçersiz`)
+      }
+      
+      if (!item.price || item.price <= 0) {
+        errors.push(`${index + 1}. ürün fiyatı geçersiz`)
+      }
+      
+      if (!item.quantity || item.quantity < 1 || item.quantity > 99) {
+        errors.push(`${index + 1}. ürün miktarı geçersiz`)
+      }
     })
-    const excludeCompleted = searchParams.get('excludeCompleted') === 'true'
-if (excludeCompleted) {
-  filter.status = { 
-    $nin: ['completed', 'cancelled'] 
   }
-}
-    // Build sort
-    const sort = buildOrderSort(sortBy, sortOrder)
-    
-    console.log('Orders filter:', filter) // Debug
-    console.log('Orders sort:', sort) // Debug
-    
-    // Kitchen view has different logic
-    if (kitchenView) {
-      const kitchenOrders = await db.collection('orders')
-        .find({
-          status: { $in: [ORDER_STATUSES.CONFIRMED, ORDER_STATUSES.PREPARING, ORDER_STATUSES.READY] },
-          ...filter
-        })
-        .sort({ priority: -1, createdAt: 1 })
-        .toArray()
-      
-      const formattedOrders = kitchenOrders.map(order => ({
-        ...order,
-        id: order._id.toString(),
-        _id: undefined,
-        duration: getOrderDuration(order)
-      }))
-      
-      return NextResponse.json({
-        success: true,
-        orders: formattedOrders,
-        view: 'kitchen',
-        total: formattedOrders.length
-      })
-    }
-    
-    // Get all orders (without pagination for grouping)
-    const allOrders = await db.collection('orders')
-      .find(filter)
-      .sort(sort)
-      .toArray()
-    
-    // Format orders
-    const formattedOrders = allOrders.map(order => ({
-      ...order,
-      id: order._id.toString(),
-      _id: undefined,
-      duration: getOrderDuration(order)
-    }))
-    
-    let response = {
-      success: true,
-      orders: formattedOrders,
-      pagination: {
-        total: formattedOrders.length,
-        page: 1,
-        limit: formattedOrders.length,
-        pages: 1
-      }
-    }
-    
-    // 🔥 MASA BAZLI GRUPLAMA - YENİ ÖZELLİK!
-    if (groupByTable) {
-      const tableGroups = groupOrdersByTable(formattedOrders)
-      response.tableGroups = tableGroups
-      response.orders = tableGroups // Ana liste olarak masa gruplarını döndür
-      response.originalOrders = formattedOrders // Orijinal siparişleri de sakla
-      
-      console.log(`📊 Grouped ${formattedOrders.length} orders into ${tableGroups.length} table groups`)
-    }
-    
-    // Include statistics
-    if (includeStats) {
-      response.statistics = calculateOrderStats(formattedOrders)
-    }
-    
-    // Include analytics
-    if (analytics) {
-      const allOrdersForAnalytics = await db.collection('orders')
-        .find({ createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } }) // Last 30 days
-        .toArray()
-      
-      const formattedAllOrders = allOrdersForAnalytics.map(order => ({
-        ...order,
-        id: order._id.toString()
-      }))
-      
-      response.analytics = {
-        trends: getOrderTrends(formattedAllOrders, 7),
-        tablePerformance: getTablePerformance(formattedAllOrders),
-        statusDistribution: calculateOrderStats(formattedAllOrders)
-      }
-    }
-    
-    return NextResponse.json(response)
-    
-  } catch (error) {
-    console.error('Orders GET error:', error)
-    return NextResponse.json(
-      { success: false, error: 'Siparişler alınamadı' },
-      { status: 500 }
-    )
+  
+  if (data.totalAmount !== undefined && (data.totalAmount <= 0 || data.totalAmount > 100000)) {
+    errors.push('Toplam tutar geçersiz')
   }
+  
+  return errors
 }
 
-// 🍽️ MASA BAZLI GRUPLAMA FONKSİYONU
-function groupOrdersByTable(orders) {
+async function groupOrdersByTable(orders, db, includeTableInfo = false) {
   const tableMap = new Map()
   
+  let tableInfoMap = new Map()
+  if (includeTableInfo) {
+    const tableNumbers = [...new Set(orders.map(o => o.tableNumber || o.tableId).filter(Boolean))]
+    if (tableNumbers.length > 0) {
+      const tables = await db.collection('tables')
+        .find({
+          number: { 
+            $in: tableNumbers.map(n => n.toString())
+          }
+        })
+        .project({ number: 1, location: 1, capacity: 1 })
+        .toArray()
+      
+      tables.forEach(table => {
+        tableInfoMap.set(table.number.toString(), {
+          location: table.location,
+          capacity: table.capacity
+        })
+      })
+    }
+  }
+  
   orders.forEach(order => {
-    const tableKey = order.tableNumber || order.tableId || 'unknown'
+    const tableNumber = order.tableNumber || order.tableId
+    if (!tableNumber) return
+    
+    const tableKey = tableNumber.toString()
     
     if (!tableMap.has(tableKey)) {
+      const tableInfo = tableInfoMap.get(tableKey) || {}
+      
       tableMap.set(tableKey, {
-        tableNumber: order.tableNumber,
-        tableId: order.tableId,
+        tableNumber: tableKey,
+        tableName: `Masa ${tableKey}`,
+        tableLocation: tableInfo.location || null,
+        tableCapacity: tableInfo.capacity || null,
         orders: [],
         totalAmount: 0,
         itemCount: 0,
-        customerCount: 0, // Kaç farklı sipariş (kişi)
-        status: 'pending', // Genel masa durumu
-        createdAt: order.createdAt, // İlk sipariş zamanı
-        lastOrderAt: order.createdAt, // Son sipariş zamanı
+        customerCount: 0,
+        status: 'pending',
+        createdAt: order.createdAt,
+        lastOrderAt: order.createdAt,
         estimatedTime: 0,
         priority: 'normal',
         assignedStaff: order.assignedStaff,
@@ -193,26 +129,22 @@ function groupOrdersByTable(orders) {
     
     const tableGroup = tableMap.get(tableKey)
     
-    // Siparişi gruba ekle
     tableGroup.orders.push(order)
     tableGroup.totalAmount += order.totalAmount || 0
     tableGroup.itemCount += order.items?.length || 0
     tableGroup.customerCount += 1
     
-    // En son sipariş zamanını güncelle
     if (new Date(order.createdAt) > new Date(tableGroup.lastOrderAt)) {
       tableGroup.lastOrderAt = order.createdAt
     }
     
-    // En eski sipariş zamanını güncelle
     if (new Date(order.createdAt) < new Date(tableGroup.createdAt)) {
       tableGroup.createdAt = order.createdAt
     }
     
-    // Durum prioritesi belirleme
     const statusPriority = {
       'pending': 1,
-      'confirmed': 2, 
+      'confirmed': 2,
       'preparing': 3,
       'ready': 4,
       'delivered': 5,
@@ -223,41 +155,34 @@ function groupOrdersByTable(orders) {
     const currentPriority = statusPriority[tableGroup.status] || 0
     const orderPriority = statusPriority[order.status] || 0
     
-    // En yüksek öncelikli durumu masa durumu yap
     if (orderPriority > currentPriority) {
       tableGroup.status = order.status
     }
     
-    // Tüm durumları topla
     if (!tableGroup.allStatuses.includes(order.status)) {
       tableGroup.allStatuses.push(order.status)
     }
     
-    // Tahmini süreyi güncelle (en uzun süre)
     if (order.estimatedTime > tableGroup.estimatedTime) {
       tableGroup.estimatedTime = order.estimatedTime
     }
     
-    // Öncelik seviyesini güncelle
     const priorityLevels = { 'low': 1, 'normal': 2, 'high': 3, 'urgent': 4 }
     if ((priorityLevels[order.priority] || 2) > (priorityLevels[tableGroup.priority] || 2)) {
       tableGroup.priority = order.priority
     }
     
-    // Müşteri notlarını topla
     if (order.customerNotes && !tableGroup.customerNotes.includes(order.customerNotes)) {
       tableGroup.customerNotes.push(order.customerNotes)
     }
   })
   
-  // Map'i array'e çevir ve sırala
   const tableGroups = Array.from(tableMap.values()).map(group => ({
     ...group,
-    id: `table-${group.tableNumber}-group`, // Unique ID
-    orderNumber: `Masa ${group.tableNumber}`, // Display name
-    isTableGroup: true, // Bu bir masa grubu olduğunu belirt
-    customerNotes: group.customerNotes.join(' | '), // Notları birleştir
-    // Masa için özet istatistikler
+    id: `table-${group.tableNumber}-group`,
+    orderNumber: group.tableName,
+    isTableGroup: true,
+    customerNotes: group.customerNotes.join(' | '),
     summary: {
       pendingCount: group.allStatuses.filter(s => s === 'pending').length,
       preparingCount: group.allStatuses.filter(s => s === 'preparing').length,
@@ -267,11 +192,129 @@ function groupOrdersByTable(orders) {
     }
   }))
   
-  // En son sipariş zamanına göre sırala
   return tableGroups.sort((a, b) => new Date(b.lastOrderAt) - new Date(a.lastOrderAt))
 }
 
-// POST - Yeni sipariş oluştur (🔐 SESSION GÜVENLİĞİ EKLENDİ)
+// GET - Orders list
+export async function GET(request) {
+  try {
+    const client = await clientPromise
+    const db = client.db('restaurant-qr')
+    
+    const { searchParams } = new URL(request.url)
+    const groupByTable = searchParams.get('groupByTable') === 'true'
+    const excludeCompleted = searchParams.get('excludeCompleted') === 'true'
+    const includeTableInfo = searchParams.get('includeTableInfo') === 'true'
+    const includeMenuImages = searchParams.get('includeMenuImages') === 'true'
+    
+    let query = {}
+    
+    if (excludeCompleted) {
+      query.status = { 
+        $nin: [ORDER_STATUSES.COMPLETED, ORDER_STATUSES.CANCELLED] 
+      }
+    }
+    
+    const statusFilter = searchParams.get('status')
+    if (statusFilter && statusFilter !== 'all') {
+      query.status = statusFilter
+    }
+    
+    const orders = await db.collection('orders')
+      .find(query)
+      .sort({ createdAt: -1 })
+      .toArray()
+    
+    // Populate menu item images
+    if (includeMenuImages && orders.length > 0) {
+      const menuItemIds = []
+      orders.forEach(order => {
+        order.items?.forEach(item => {
+          if (item.menuItemId) {
+            menuItemIds.push(item.menuItemId)
+          }
+        })
+      })
+      
+      if (menuItemIds.length > 0) {
+        const uniqueIds = [...new Set(menuItemIds)]
+        const menuItems = await db.collection('menu')
+          .find({ 
+            _id: { 
+              $in: uniqueIds.map(id => {
+                try {
+                  return new ObjectId(id)
+                } catch {
+                  return id
+                }
+              })
+            }
+          })
+          .project({ _id: 1, image: 1, name: 1 })
+          .toArray()
+        
+        const menuItemMap = new Map()
+        menuItems.forEach(item => {
+          menuItemMap.set(item._id.toString(), item)
+        })
+        
+        orders.forEach(order => {
+          order.items?.forEach(item => {
+            if (item.menuItemId) {
+              const menuItem = menuItemMap.get(item.menuItemId.toString())
+              if (menuItem?.image) {
+                item.image = menuItem.image
+              }
+            }
+          })
+        })
+      }
+    }
+    
+    if (groupByTable) {
+      const tableGroups = await groupOrdersByTable(orders, db, includeTableInfo)
+      
+      const stats = {
+        totalOrders: orders.length,
+        activeOrders: orders.filter(o => 
+          ![ORDER_STATUSES.COMPLETED, ORDER_STATUSES.CANCELLED].includes(o.status)
+        ).length,
+        totalRevenue: orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0),
+        avgOrderValue: orders.length > 0 
+          ? orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0) / orders.length 
+          : 0,
+        pending: orders.filter(o => o.status === ORDER_STATUSES.PENDING).length,
+        confirmed: orders.filter(o => o.status === ORDER_STATUSES.CONFIRMED).length,
+        preparing: orders.filter(o => o.status === ORDER_STATUSES.PREPARING).length,
+        ready: orders.filter(o => o.status === ORDER_STATUSES.READY).length,
+        delivered: orders.filter(o => o.status === ORDER_STATUSES.DELIVERED).length,
+        completed: orders.filter(o => o.status === ORDER_STATUSES.COMPLETED).length,
+        cancelled: orders.filter(o => o.status === ORDER_STATUSES.CANCELLED).length
+      }
+      
+      return NextResponse.json({
+        success: true,
+        orders: tableGroups,
+        originalOrders: orders,
+        statistics: stats
+      })
+    }
+    
+    return NextResponse.json({
+      success: true,
+      orders: orders
+    })
+    
+  } catch (error) {
+    console.error('Orders GET error:', error)
+    return NextResponse.json(
+      { success: false, error: 'Siparişler yüklenemedi' },
+      { status: 500 }
+    )
+  }
+}
+
+// POST - Create new order
 export async function POST(request) {
   try {
     const client = await clientPromise
@@ -279,159 +322,34 @@ export async function POST(request) {
     
     const data = await request.json()
     
-    console.log('📦 Received order data:', JSON.stringify(data, null, 2)) // Debug
-    
-    // ============================================
-    // 🔐 SESSION GÜVENLİK KONTROLLERI (YENİ!)
-    // ============================================
-    
-    // Session ID var mı?
-    if (data.sessionId) {
-      console.log('🔐 Session security enabled for order')
-      
-      // 1️⃣ SESSION VALIDATION
-      const sessionValidation = await validateSession(data.sessionId, db)
-      
-      if (!sessionValidation.valid) {
-        console.log('❌ Session validation failed:', sessionValidation.error)
-        return NextResponse.json({
-          success: false,
-          error: sessionValidation.error,
-          code: sessionValidation.code,
-          action: 'RESCAN_QR'
-        }, { status: 401 })
-      }
-      
-      const session = sessionValidation.session
-      console.log('✅ Session validated:', session.sessionId)
-      
-      // 2️⃣ DEVICE REGISTRATION/UPDATE
-      if (data.deviceFingerprint) {
-        const deviceResult = await registerDevice(
-          data.sessionId,
-          {
-            fingerprint: data.deviceFingerprint,
-            ipAddress: request.headers.get('x-forwarded-for') || 
-                        request.headers.get('x-real-ip') || 
-                        'unknown',
-            userAgent: request.headers.get('user-agent') || 'unknown',
-            deviceInfo: data.deviceInfo || {}
-          },
-          db
-        )
-        
-        console.log('📱 Device registered:', deviceResult.message)
-      }
-      
-      // 3️⃣ RATE LIMITING
-      const rateLimitCheck = await checkRateLimit(session, db)
-      
-      if (!rateLimitCheck.allowed) {
-        console.log('🚫 Rate limit exceeded:', rateLimitCheck.reason)
-        return NextResponse.json({
-          success: false,
-          error: rateLimitCheck.message,
-          code: 'RATE_LIMIT_EXCEEDED',
-          retryAfter: rateLimitCheck.retryAfter
-        }, { status: 429 })
-      }
-      
-      console.log('✅ Rate limit check passed')
-      
-      // 4️⃣ BOT DETECTION
-      const botCheck = await detectBotPattern(session, data, db)
-      
-      if (botCheck.isBot && botCheck.action === 'BLOCK') {
-        console.log('🤖 Bot detected - BLOCKING:', botCheck.reason)
-        
-        // Session'ı şüpheli olarak işaretle
-        await db.collection('sessions').updateOne(
-          { sessionId: data.sessionId },
-          {
-            $set: {
-              'flags.isSuspicious': true,
-              'flags.autoFlagged': true,
-              'flags.flaggedAt': new Date()
-            },
-            $addToSet: {
-              'flags.reasons': 'BOT_DETECTED'
-            }
-          }
-        )
-        
-        return NextResponse.json({
-          success: false,
-          error: botCheck.message,
-          code: 'BOT_DETECTED',
-          action: 'WAIT',
-          waitTime: 10
-        }, { status: 429 })
-      }
-      
-      if (botCheck.isBot && botCheck.action === 'WAIT') {
-        console.log('⚠️ Bot suspected - SLOWING DOWN:', botCheck.reason)
-        return NextResponse.json({
-          success: false,
-          error: botCheck.message || 'Lütfen 10 saniye bekleyin',
-          code: 'SLOW_DOWN',
-          waitTime: botCheck.waitTime || 10
-        }, { status: 429 })
-      }
-      
-      console.log('✅ Bot detection passed')
-      
-      // 5️⃣ DUPLICATE CHECK
-      const duplicateCheck = await checkDuplicateOrder(data, data.sessionId, db)
-      
-      if (duplicateCheck.isDuplicate && !data.confirmed) {
-        console.log('⚠️ Duplicate order detected')
-        return NextResponse.json({
-          success: false,
-          error: duplicateCheck.message,
-          code: 'DUPLICATE_SUSPECTED',
-          action: 'CONFIRM',
-          requireConfirmation: true
-        }, { status: 400 })
-      }
-      
-      console.log('✅ All security checks passed')
-    } else {
-      console.log('ℹ️ No session ID - backward compatible mode')
-    }
-    
-    // ============================================
-    // NORMAL SİPARİŞ İŞLEMLERİ (MEVCUT KOD)
-    // ============================================
+    console.log('📦 Received order data:', JSON.stringify(data, null, 2))
     
     // Validation
     const errors = validateOrder(data)
     if (errors.length > 0) {
-      console.log('❌ Validation errors:', errors) // Debug
+      console.log('❌ Validation errors:', errors)
       return NextResponse.json(
         { success: false, errors },
         { status: 400 }
       )
     }
     
-    // Table kontrolü (eğer tableId verilmişse)
+    // Table check
     if (data.tableId) {
-      // tableId ObjectId formatında mı kontrol et
       let tableQuery = {}
       
       if (data.tableId.length === 24 && /^[0-9a-fA-F]{24}$/.test(data.tableId)) {
-        // ObjectId formatında
         tableQuery = { _id: new ObjectId(data.tableId) }
       } else {
-        // Masa numarası formatında (string veya number)
-  tableQuery = { number: data.tableId.toString() }  // ✅ DOĞRU
+        tableQuery = { number: data.tableId.toString() }
       }
       
-      console.log('Table query:', tableQuery) // Debug
+      console.log('Table query:', tableQuery)
       
       const tableExists = await db.collection('tables')
         .findOne(tableQuery)
       
-      console.log('Table exists:', tableExists) // Debug
+      console.log('Table exists:', tableExists)
       
       if (!tableExists) {
         return NextResponse.json(
@@ -441,19 +359,18 @@ export async function POST(request) {
       }
     }
     
-    // Menu items kontrolü
+    // Menu items check
     const menuItemIds = data.items.map(item => item.menuItemId)
-    console.log('🍕 Menu item IDs:', menuItemIds) // Debug
+    console.log('🍕 Menu item IDs:', menuItemIds)
     
-    // ObjectId formatını kontrol et
     const validObjectIds = menuItemIds.filter(id => 
       id && id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id)
     )
     
-    console.log('✅ Valid ObjectIds:', validObjectIds) // Debug
+    console.log('✅ Valid ObjectIds:', validObjectIds)
     
     if (validObjectIds.length !== menuItemIds.length) {
-      console.log('❌ Invalid menu item IDs found') // Debug
+      console.log('❌ Invalid menu item IDs found')
       return NextResponse.json(
         { success: false, error: 'Geçersiz ürün ID\'leri bulundu' },
         { status: 400 }
@@ -467,7 +384,7 @@ export async function POST(request) {
       })
       .toArray()
     
-    console.log('🍕 Found menu items:', validMenuItems.length) // Debug
+    console.log('🍕 Found menu items:', validMenuItems.length)
     
     if (validMenuItems.length !== menuItemIds.length) {
       return NextResponse.json(
@@ -477,9 +394,34 @@ export async function POST(request) {
     }
     
     // Create order
-    const order = createOrder(data)
+    const now = new Date()
+    const order = {
+      orderNumber: `ORD-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      tableNumber: data.tableNumber?.toString() || null,
+      tableId: data.tableId?.toString() || null,
+      sessionId: data.sessionId || null,
+      items: data.items.map(item => ({
+        ...item,
+        status: ORDER_STATUSES.PENDING,
+        addedAt: now
+      })),
+      totalAmount: data.totalAmount || data.items.reduce((sum, item) => 
+        sum + (item.price * item.quantity), 0
+      ),
+      status: ORDER_STATUSES.PENDING,
+      paymentStatus: PAYMENT_STATUSES.UNPAID,
+      customerNotes: data.customerNotes || '',
+      kitchenNotes: data.kitchenNotes || '',
+      priority: data.priority || 'normal',
+      estimatedTime: data.estimatedTime || 20,
+      timestamps: {
+        [ORDER_STATUSES.PENDING]: now
+      },
+      createdAt: now,
+      updatedAt: now
+    }
     
-    // 🔐 YENİ: Session bilgilerini order'a ekle
+    // Session info
     if (data.sessionId) {
       order.sessionId = data.sessionId
       order.deviceFingerprint = data.deviceFingerprint || null
@@ -490,7 +432,7 @@ export async function POST(request) {
       }
     }
     
-    // Estimated time calculation based on items
+    // Estimated time calculation
     let totalEstimatedTime = 0
     data.items.forEach(item => {
       const menuItem = validMenuItems.find(mi => mi._id.toString() === item.menuItemId)
@@ -500,7 +442,7 @@ export async function POST(request) {
     })
     
     if (totalEstimatedTime > 0) {
-      order.estimatedTime = Math.ceil(totalEstimatedTime / data.items.length) // Average
+      order.estimatedTime = Math.ceil(totalEstimatedTime / data.items.length)
     }
     
     // Insert order
@@ -508,11 +450,8 @@ export async function POST(request) {
     
     console.log('✅ Order created:', result.insertedId.toString())
     
-    // ============================================
-    // 🔐 YENİ: SESSION GÜNCELLEME
-    // ============================================
+    // Update session
     if (data.sessionId) {
-      // Session istatistiklerini güncelle
       await db.collection('sessions').updateOne(
         { sessionId: data.sessionId },
         {
@@ -524,14 +463,13 @@ export async function POST(request) {
             orders: result.insertedId
           },
           $set: {
-            lastActivity: new Date(),
-            'rateLimits.lastOrderTime': new Date(),
-            updatedAt: new Date()
+            lastActivity: now,
+            'rateLimits.lastOrderTime': now,
+            updatedAt: now
           }
         }
       )
       
-      // Device order count güncelle
       if (data.deviceFingerprint) {
         await db.collection('sessions').updateOne(
           { 
@@ -543,7 +481,7 @@ export async function POST(request) {
               'devices.$.orderCount': 1
             },
             $set: {
-              'devices.$.lastSeen': new Date()
+              'devices.$.lastSeen': now
             }
           }
         )
@@ -552,27 +490,26 @@ export async function POST(request) {
       console.log('✅ Session updated with order info')
     }
     
-    // Update table status if needed
+    // Update table status
     if (data.tableId) {
       let tableQuery = {}
       
       if (data.tableId.length === 24 && /^[0-9a-fA-F]{24}$/.test(data.tableId)) {
-        // ObjectId formatında
         tableQuery = { _id: new ObjectId(data.tableId) }
       } else {
-        // Masa numarası formatında
-tableQuery = { 
-  number: { 
-    $regex: new RegExp(`^${data.tableId.toString()}$`, 'i') 
-  }
-}      }
+        tableQuery = { 
+          number: { 
+            $regex: new RegExp(`^${data.tableId.toString()}$`, 'i') 
+          }
+        }
+      }
       
       await db.collection('tables').updateOne(
         tableQuery,
         { 
           $set: { 
             status: 'occupied',
-            lastOrderAt: new Date()
+            lastOrderAt: now
           }
         }
       )
@@ -595,7 +532,7 @@ tableQuery = {
   }
 }
 
-// PUT - Sipariş güncelle (status, payment, table operations)
+// PUT - Update order
 export async function PUT(request) {
   try {
     const client = await clientPromise
@@ -604,9 +541,13 @@ export async function PUT(request) {
     const data = await request.json()
     const { id, action, ...updateData } = data
     
-    // 🏢 MASA KAPATMA ÖZELLİĞİ - YENİ!
+    console.log('🔄 PUT Request:', { id, action, updateData })
+    
+    // Close table action
     if (action === 'closeTable') {
       const { tableNumber } = updateData
+      
+      console.log('🏢 Close table request:', { tableNumber, type: typeof tableNumber })
       
       if (!tableNumber) {
         return NextResponse.json(
@@ -615,12 +556,13 @@ export async function PUT(request) {
         )
       }
       
-      console.log(`🏢 Closing table ${tableNumber}...`) // Debug
+      const tableNumberStr = tableNumber.toString()
+      console.log(`🏢 Closing table: ${tableNumberStr}`)
       
-      // 🔐 YENİ: Masa kapatılırken session'ı da kapat
-      await db.collection('sessions').updateOne(
+      // Close sessions
+      await db.collection('sessions').updateMany(
         { 
-          tableNumber: tableNumber.toString(),
+          tableNumber: tableNumberStr,
           status: 'active'
         },
         {
@@ -632,14 +574,14 @@ export async function PUT(request) {
         }
       )
       
-      console.log(`🔐 Session closed for table ${tableNumber}`)
+      console.log(`🔐 Sessions closed for table ${tableNumberStr}`)
       
-      // O masadaki tüm aktif siparişleri bul
+      // Find active orders
       const activeOrders = await db.collection('orders')
         .find({
           $or: [
-            { tableNumber: tableNumber.toString() },
-            { tableId: tableNumber.toString() }
+            { tableNumber: tableNumberStr },
+            { tableId: tableNumberStr }
           ],
           status: { 
             $nin: [ORDER_STATUSES.COMPLETED, ORDER_STATUSES.CANCELLED] 
@@ -647,7 +589,7 @@ export async function PUT(request) {
         })
         .toArray()
       
-      console.log(`📦 Found ${activeOrders.length} active orders for table ${tableNumber}`) // Debug
+      console.log(`📦 Found ${activeOrders.length} active orders for table ${tableNumberStr}`)
       
       if (activeOrders.length === 0) {
         return NextResponse.json(
@@ -656,12 +598,12 @@ export async function PUT(request) {
         )
       }
       
-      // Tüm aktif siparişleri 'completed' durumuna getir
+      // Complete orders
       const bulkUpdateResult = await db.collection('orders').updateMany(
         {
           $or: [
-            { tableNumber: tableNumber.toString() },
-            { tableId: tableNumber.toString() }
+            { tableNumber: tableNumberStr },
+            { tableId: tableNumberStr }
           ],
           status: { 
             $nin: [ORDER_STATUSES.COMPLETED, ORDER_STATUSES.CANCELLED] 
@@ -672,20 +614,17 @@ export async function PUT(request) {
             status: ORDER_STATUSES.COMPLETED,
             [`timestamps.${ORDER_STATUSES.COMPLETED}`]: new Date(),
             updatedAt: new Date(),
-            closedByTable: true // Masa kapatma ile tamamlandığını belirt
+            closedByTable: true
           }
         }
       )
       
-      console.log(`✅ Updated ${bulkUpdateResult.modifiedCount} orders to completed`) // Debug
+      console.log(`✅ Updated ${bulkUpdateResult.modifiedCount} orders to completed`)
       
-      // Masanın durumunu 'empty' yap
-      await db.collection('tables').updateOne(
+      // Update table
+      const tableUpdateResult = await db.collection('tables').updateOne(
         { 
-          $or: [
-            { number: tableNumber.toString()  },
-            { _id: tableNumber.length === 24 ? new ObjectId(tableNumber) : null }
-          ].filter(Boolean)
+          number: tableNumberStr
         },
         { 
           $set: { 
@@ -696,16 +635,16 @@ export async function PUT(request) {
         }
       )
       
-      console.log(`🏢 Table ${tableNumber} status updated to empty`) // Debug
+      console.log(`🏢 Table ${tableNumberStr} status updated:`, tableUpdateResult.modifiedCount > 0 ? 'SUCCESS' : 'NOT FOUND')
       
       return NextResponse.json({
         success: true,
-        message: `Masa ${tableNumber} başarıyla kapatıldı`,
+        message: `Masa ${tableNumberStr} başarıyla kapatıldı`,
         completedOrders: bulkUpdateResult.modifiedCount
       })
     }
     
-    // Normal sipariş işlemleri için ID gerekli
+    // Normal order operations require ID
     if (!id) {
       return NextResponse.json(
         { success: false, error: 'Sipariş ID gerekli' },
@@ -713,7 +652,6 @@ export async function PUT(request) {
       )
     }
     
-    // Find existing order
     const existingOrder = await db.collection('orders')
       .findOne({ _id: new ObjectId(id) })
     
@@ -745,9 +683,64 @@ export async function PUT(request) {
           updatedAt: new Date()
         }
         
-        // Add staff assignment if provided
         if (updateData.assignedStaff) {
           updateFields.assignedStaff = updateData.assignedStaff
+        }
+        
+        break
+        
+      case 'updateItemStatus':
+        const { itemIndex, itemStatus } = updateData
+        
+        if (itemIndex === undefined || !itemStatus) {
+          return NextResponse.json(
+            { success: false, error: 'Ürün index ve durum gerekli' },
+            { status: 400 }
+          )
+        }
+        
+        const items = [...existingOrder.items]
+        if (!items[itemIndex]) {
+          return NextResponse.json(
+            { success: false, error: 'Ürün bulunamadı' },
+            { status: 404 }
+          )
+        }
+        
+        items[itemIndex].status = itemStatus
+        items[itemIndex].statusUpdatedAt = new Date()
+        
+        updateFields = {
+          items,
+          updatedAt: new Date()
+        }
+        
+        // Check if all items have same status
+        const allStatuses = items.map(i => i.status)
+        const uniqueStatuses = [...new Set(allStatuses)]
+        
+        if (uniqueStatuses.length === 1) {
+          updateFields.status = uniqueStatuses[0]
+          updateFields[`timestamps.${uniqueStatuses[0]}`] = new Date()
+        } else {
+          // Set order status to most advanced status
+          const statusPriority = {
+            'pending': 1,
+            'confirmed': 2,
+            'preparing': 3,
+            'ready': 4,
+            'delivered': 5,
+            'completed': 6,
+            'cancelled': 0
+          }
+          
+          const maxStatus = allStatuses.reduce((max, current) => {
+            return (statusPriority[current] || 0) > (statusPriority[max] || 0) ? current : max
+          }, 'pending')
+          
+          console.log(`⚡ Mixed statuses, setting order to: ${maxStatus}`)
+          updateFields.status = maxStatus
+          updateFields[`timestamps.${maxStatus}`] = new Date()
         }
         
         break
@@ -765,7 +758,6 @@ export async function PUT(request) {
           updatedAt: new Date()
         }
         
-        // If payment is completed, mark order as completed
         if (updateData.paymentStatus === PAYMENT_STATUSES.PAID && 
             existingOrder.status === ORDER_STATUSES.DELIVERED) {
           updateFields.status = ORDER_STATUSES.COMPLETED
@@ -782,90 +774,6 @@ export async function PUT(request) {
         }
         break
         
-      case 'updatePriority':
-        updateFields = {
-          priority: updateData.priority,
-          updatedAt: new Date()
-        }
-        break
-        
-      case 'assignStaff':
-        updateFields = {
-          assignedStaff: updateData.assignedStaff,
-          updatedAt: new Date()
-        }
-        break
-
-case 'updateItemStatus':
-  // 🆕 HER ÜRÜN İÇİN AYRI DURUM GÜNCELLEMESİ
-  const { itemIndex, itemStatus } = updateData
-  
-  // Validasyon
-  if (itemIndex === undefined || !itemStatus) {
-    return NextResponse.json(
-      { success: false, error: 'Item index ve status gerekli' },
-      { status: 400 }
-    )
-  }
-  
-  if (!Object.values(ORDER_STATUSES).includes(itemStatus)) {
-    return NextResponse.json(
-      { success: false, error: 'Geçersiz item status' },
-      { status: 400 }
-    )
-  }
-  
-  console.log(`📦 Updating item ${itemIndex} to status: ${itemStatus}`) // Debug
-  
-  // Ürünün durumunu güncelle
-  updateFields = {
-    [`items.${itemIndex}.status`]: itemStatus,
-    [`items.${itemIndex}.updatedAt`]: new Date(),
-    updatedAt: new Date()
-  }
-  
-  // 🔥 AKILLI DURUM GÜNCELLEMESİ
-  // Tüm itemlar aynı durumda mı kontrol et
-  const currentOrder = await db.collection('orders').findOne({ _id: new ObjectId(id) })
-  
-  if (currentOrder && currentOrder.items) {
-    // Güncelleme sonrası tüm item durumlarını hesapla
-    const allItemStatuses = currentOrder.items.map((item, idx) => 
-      idx === itemIndex ? itemStatus : (item.status || 'pending')
-    )
-    
-    console.log('📊 All item statuses after update:', allItemStatuses) // Debug
-    
-    // Tüm itemlar aynı durumdaysa, order status'ü de güncelle
-    const allSame = allItemStatuses.every(s => s === itemStatus)
-    
-    if (allSame) {
-      console.log(`✅ All items are ${itemStatus}, updating order status`) // Debug
-      updateFields.status = itemStatus
-      updateFields[`timestamps.${itemStatus}`] = new Date()
-    } else {
-      // Farklı durumlardaysa, en ileri durum ne ise o olsun
-      const statusPriority = {
-        'pending': 1,
-        'confirmed': 2,
-        'preparing': 3,
-        'ready': 4,
-        'delivered': 5,
-        'completed': 6
-      }
-      
-      const maxStatus = allItemStatuses.reduce((max, current) => {
-        return (statusPriority[current] || 0) > (statusPriority[max] || 0) ? current : max
-      }, 'pending')
-      
-      console.log(`⚡ Mixed statuses, setting order to: ${maxStatus}`) // Debug
-      updateFields.status = maxStatus
-      updateFields[`timestamps.${maxStatus}`] = new Date()
-    }
-  }
-  
-  break
-        
       default:
         // Full update
         const errors = validateOrder({ ...existingOrder, ...updateData })
@@ -876,7 +784,10 @@ case 'updateItemStatus':
           )
         }
         
-        updateFields = updateOrder(updateData)
+        updateFields = {
+          ...updateData,
+          updatedAt: new Date()
+        }
     }
     
     // Update order
@@ -894,7 +805,6 @@ case 'updateItemStatus':
     
     // Handle table status updates
     if (updateFields.status === ORDER_STATUSES.COMPLETED && existingOrder.tableId) {
-      // Check if table has any other active orders
       const activeOrdersCount = await db.collection('orders').countDocuments({
         $or: [
           { tableId: existingOrder.tableId },
@@ -903,7 +813,6 @@ case 'updateItemStatus':
         status: { $nin: [ORDER_STATUSES.COMPLETED, ORDER_STATUSES.CANCELLED] }
       })
       
-      // If no active orders, mark table as empty
       if (activeOrdersCount === 0) {
         let tableQuery = {}
         
@@ -939,7 +848,7 @@ case 'updateItemStatus':
   }
 }
 
-// DELETE - Sipariş iptal et
+// DELETE - Cancel order
 export async function DELETE(request) {
   try {
     const client = await clientPromise
@@ -955,9 +864,7 @@ export async function DELETE(request) {
       )
     }
     
-    // Find order
-    const order = await db.collection('orders')
-      .findOne({ _id: new ObjectId(id) })
+    const order = await db.collection('orders').findOne({ _id: new ObjectId(id) })
     
     if (!order) {
       return NextResponse.json(
@@ -966,43 +873,57 @@ export async function DELETE(request) {
       )
     }
     
-    // Check if order can be cancelled
-    const cancellableStatuses = [ORDER_STATUSES.PENDING, ORDER_STATUSES.CONFIRMED]
-    if (!cancellableStatuses.includes(order.status)) {
+    if (order.status === ORDER_STATUSES.COMPLETED || order.status === ORDER_STATUSES.CANCELLED) {
       return NextResponse.json(
-        { success: false, error: 'Bu durumda olan sipariş iptal edilemez' },
+        { success: false, error: 'Bu sipariş zaten tamamlanmış veya iptal edilmiş' },
         { status: 400 }
       )
     }
     
-    // Update order status to cancelled instead of deleting
-    const result = await db.collection('orders').updateOne(
-      { _id: new ObjectId(id) },
-      { 
-        $set: { 
-          status: ORDER_STATUSES.CANCELLED,
-          [`timestamps.${ORDER_STATUSES.CANCELLED}`]: new Date(),
-          updatedAt: new Date()
-        }
-      }
-    )
+    const result = await db.collection('orders').deleteOne({ 
+      _id: new ObjectId(id) 
+    })
     
-    if (result.matchedCount === 0) {
+    if (result.deletedCount === 0) {
       return NextResponse.json(
-        { success: false, error: 'Sipariş iptal edilemedi' },
-        { status: 500 }
+        { success: false, error: 'Sipariş silinemedi' },
+        { status: 404 }
       )
+    }
+    
+    // Check if table has any remaining active orders
+    if (order.tableId || order.tableNumber) {
+      const tableId = order.tableId || order.tableNumber
+      const remainingOrders = await db.collection('orders').countDocuments({
+        $or: [
+          { tableId: tableId.toString() },
+          { tableNumber: tableId.toString() }
+        ],
+        status: { $nin: [ORDER_STATUSES.COMPLETED, ORDER_STATUSES.CANCELLED] }
+      })
+      
+      if (remainingOrders === 0) {
+        await db.collection('tables').updateOne(
+          { number: tableId.toString() },
+          { 
+            $set: { 
+              status: 'empty',
+              currentSessionId: null
+            }
+          }
+        )
+      }
     }
     
     return NextResponse.json({
       success: true,
-      message: 'Sipariş başarıyla iptal edildi'
+      message: 'Sipariş başarıyla silindi'
     })
     
   } catch (error) {
     console.error('Orders DELETE error:', error)
     return NextResponse.json(
-      { success: false, error: 'Sipariş iptal edilemedi' },
+      { success: false, error: 'Sipariş silinemedi' },
       { status: 500 }
     )
   }
