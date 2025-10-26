@@ -21,9 +21,7 @@ export default function MenuFooter() {
   ]
 
   const socialLinks = [
-    { icon: Instagram, href: "#", label: "Instagram" },
-    { icon: Facebook, href: "#", label: "Facebook" },
-    { icon: Twitter, href: "#", label: "Twitter" }
+    { icon: Instagram, href: "https://www.instagram.com/meva.pastacafe", label: "Instagram" }
   ]
 
   return (

@@ -774,6 +774,68 @@ export async function PUT(request) {
         }
         break
         
+      case 'addItem':
+        // 🆕 MANUEL ÜRÜN EKLEME
+        const { item } = updateData
+        
+        if (!item) {
+          return NextResponse.json(
+            { success: false, error: 'Ürün bilgisi gerekli' },
+            { status: 400 }
+          )
+        }
+        
+        // Validate item
+        if (!item.menuItemId || !item.name || !item.price || !item.quantity) {
+          return NextResponse.json(
+            { success: false, error: 'Ürün bilgileri eksik (menuItemId, name, price, quantity gerekli)' },
+            { status: 400 }
+          )
+        }
+        
+        if (item.quantity < 1 || item.quantity > 99) {
+          return NextResponse.json(
+            { success: false, error: 'Ürün miktarı 1-99 arasında olmalı' },
+            { status: 400 }
+          )
+        }
+        
+        // Prepare new item
+        const newItem = {
+          menuItemId: item.menuItemId,
+          name: item.name,
+          price: parseFloat(item.price),
+          quantity: parseInt(item.quantity),
+          status: 'pending',
+          addedAt: new Date(),
+          statusUpdatedAt: new Date()
+        }
+        
+        // Optional fields
+        if (item.notes) newItem.notes = item.notes
+        if (item.image) newItem.image = item.image
+        if (item.customizations) newItem.customizations = item.customizations
+        
+        // Calculate new total amount
+        const itemTotal = newItem.price * newItem.quantity
+        const newTotalAmount = (existingOrder.totalAmount || 0) + itemTotal
+        
+        updateFields = {
+          items: [...existingOrder.items, newItem],
+          totalAmount: newTotalAmount,
+          updatedAt: new Date()
+        }
+        
+        console.log(`➕ Adding item to order ${id}:`, {
+          itemName: newItem.name,
+          quantity: newItem.quantity,
+          price: newItem.price,
+          itemTotal,
+          newTotalAmount
+        })
+        
+        break
+        
       default:
         // Full update
         const errors = validateOrder({ ...existingOrder, ...updateData })

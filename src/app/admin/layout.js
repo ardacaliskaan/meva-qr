@@ -26,6 +26,8 @@ import {
   Moon,
   Sun,
   ChevronDown,
+  ChevronLeft,  // 🆕 Collapse icon
+  ChevronRight, // 🆕 Expand icon
   User,
   HelpCircle,
   Activity,
@@ -47,6 +49,7 @@ const menuItems = [
 
 export default function AdminLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false) // 🆕 Collapsible state
   const [isMobile, setIsMobile] = useState(false)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const [notificationOpen, setNotificationOpen] = useState(false)
@@ -85,6 +88,20 @@ export default function AdminLayout({ children }) {
     window.addEventListener('resize', checkScreenSize)
     return () => window.removeEventListener('resize', checkScreenSize)
   }, [])
+
+  // 🆕 LOAD/SAVE COLLAPSED STATE
+  useEffect(() => {
+    // localStorage'dan collapsed durumu yükle
+    const saved = localStorage.getItem('sidebarCollapsed')
+    if (saved !== null) {
+      setSidebarCollapsed(saved === 'true')
+    }
+  }, [])
+
+  useEffect(() => {
+    // Collapsed durumu localStorage'a kaydet
+    localStorage.setItem('sidebarCollapsed', sidebarCollapsed.toString())
+  }, [sidebarCollapsed])
 
   // 🆕 LOAD REAL NOTIFICATIONS
   const loadNotifications = useCallback(async () => {
@@ -297,6 +314,11 @@ export default function AdminLayout({ children }) {
     setSidebarOpen(prev => !prev)
   }, [])
 
+  // 🆕 TOGGLE COLLAPSE
+  const toggleCollapse = useCallback(() => {
+    setSidebarCollapsed(prev => !prev)
+  }, [])
+
   const currentPageTitle = useMemo(() => {
     return menuItems.find(item => item.href === pathname)?.label || 'Admin Panel'
   }, [pathname])
@@ -332,7 +354,10 @@ export default function AdminLayout({ children }) {
         {(!isMobile || sidebarOpen) && (
           <motion.aside
             initial={isMobile ? { x: -280 } : false}
-            animate={{ x: 0 }}
+            animate={{ 
+              x: 0,
+              width: isMobile ? 280 : (sidebarCollapsed ? 80 : 280) 
+            }}
             exit={{ x: -280 }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
             drag={isMobile ? "x" : false}
@@ -346,24 +371,27 @@ export default function AdminLayout({ children }) {
             style={isMobile ? { x, opacity } : {}}
             className={`
               ${isMobile ? 'fixed' : 'relative'} 
-              inset-y-0 left-0 z-50 w-72
+              inset-y-0 left-0 z-50 transition-all duration-300
+              ${sidebarCollapsed && !isMobile ? 'w-20' : 'w-72'}
               bg-white border-r border-gray-200 
               flex flex-col shadow-2xl
             `}
           >
             {/* Logo Section */}
-            <div className="h-16 flex items-center justify-between px-6 border-b border-gray-100">
+            <div className={`h-16 flex items-center ${sidebarCollapsed && !isMobile ? 'justify-center' : 'justify-between'} px-6 border-b border-gray-100`}>
               <motion.div 
-                className="flex items-center gap-3"
+                className={`flex items-center gap-3 ${sidebarCollapsed && !isMobile ? 'justify-center' : ''}`}
                 whileHover={{ scale: 1.02 }}
               >
                 <div className="w-10 h-10 bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl flex items-center justify-center shadow-lg">
                   <ChefHat className="w-6 h-6 text-white" />
                 </div>
-                <div>
-                  <h1 className="font-bold text-gray-900 text-lg">Restaurant</h1>
-                  <p className="text-xs text-gray-500">Admin Panel</p>
-                </div>
+                {!(sidebarCollapsed && !isMobile) && (
+                  <div>
+                    <h1 className="font-bold text-gray-900 text-lg">Restaurant</h1>
+                    <p className="text-xs text-gray-500">Admin Panel</p>
+                  </div>
+                )}
               </motion.div>
               
               {isMobile && (
@@ -386,10 +414,11 @@ export default function AdminLayout({ children }) {
                 return (
                   <Link key={item.href} href={item.href}>
                     <motion.div
-                      whileHover={{ x: 4 }}
+                      whileHover={{ x: sidebarCollapsed && !isMobile ? 0 : 4 }}
                       whileTap={{ scale: 0.98 }}
+                      title={sidebarCollapsed && !isMobile ? item.label : undefined}
                       className={`
-                        flex items-center gap-3 px-4 py-3 rounded-xl
+                        flex items-center gap-3 ${sidebarCollapsed && !isMobile ? 'justify-center' : ''} px-4 py-3 rounded-xl
                         transition-all duration-200 relative group
                         ${isActive 
                           ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-lg shadow-amber-500/30' 
@@ -397,20 +426,27 @@ export default function AdminLayout({ children }) {
                         }
                       `}
                     >
-                      <Icon className={`w-5 h-5 ${isActive ? 'text-white' : 'text-gray-600 group-hover:text-amber-600'}`} />
-                      <span className="font-medium flex-1">{item.label}</span>
-                      
-                      {item.badge === 'hot' && (
-                        <motion.span 
-                          animate={{ scale: [1, 1.2, 1] }}
-                          transition={{ repeat: Infinity, duration: 2 }}
-                          className="px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full"
-                        >
-                          HOT
-                        </motion.span>
+                      <Icon className={`w-5 h-5 flex-shrink-0 ${isActive ? 'text-white' : 'text-gray-600 group-hover:text-amber-600'}`} />
+                      {!(sidebarCollapsed && !isMobile) && (
+                        <>
+                          <span className="font-medium flex-1">{item.label}</span>
+                          
+                          {item.badge === 'hot' && (
+                            <motion.span 
+                              animate={{ scale: [1, 1.2, 1] }}
+                              transition={{ repeat: Infinity, duration: 2 }}
+                              className="px-2 py-0.5 bg-red-500 text-white text-xs font-bold rounded-full"
+                            >
+                              HOT
+                            </motion.span>
+                          )}
+                        </>
                       )}
 
-                      {isActive && (
+                      {/* Tooltip for collapsed mode */}
+                      {sidebarCollapsed && !isMobile && item.badge === 'hot' && (
+                        <div className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full"></div>
+                      )}                      {isActive && (
                         <motion.div
                           layoutId="activeTab"
                           className="absolute inset-0 bg-gradient-to-r from-amber-500 to-orange-600 rounded-xl -z-10"
@@ -423,16 +459,39 @@ export default function AdminLayout({ children }) {
               })}
             </nav>
 
-            {/* User Section */}
-            <div className="p-4 border-t border-gray-100">
-              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
-                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
+            {/* User Section & Collapse Toggle */}
+            <div className="p-4 border-t border-gray-100 space-y-2">
+              {/* Collapse Toggle Button - Desktop Only */}
+              {!isMobile && (
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={toggleCollapse}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors group"
+                  title={sidebarCollapsed ? 'Sidebar\'ı Genişlet' : 'Sidebar\'ı Daralt'}
+                >
+                  {sidebarCollapsed ? (
+                    <ChevronRight className="w-5 h-5 text-gray-600 group-hover:text-amber-600" />
+                  ) : (
+                    <>
+                      <ChevronLeft className="w-5 h-5 text-gray-600 group-hover:text-amber-600" />
+                      <span className="text-sm font-medium text-gray-600 group-hover:text-amber-600">Daralt</span>
+                    </>
+                  )}
+                </motion.button>
+              )}
+              
+              {/* User Info */}
+              <div className={`flex items-center gap-3 p-3 bg-gray-50 rounded-xl ${sidebarCollapsed && !isMobile ? 'justify-center' : ''}`}>
+                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center flex-shrink-0">
                   <User className="w-5 h-5 text-white" />
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-gray-900 text-sm truncate">Admin User</p>
-                  <p className="text-xs text-gray-500">admin@restaurant.com</p>
-                </div>
+                {!(sidebarCollapsed && !isMobile) && (
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-900 text-sm truncate">Admin User</p>
+                    <p className="text-xs text-gray-500">admin@restaurant.com</p>
+                  </div>
+                )}
               </div>
             </div>
           </motion.aside>
