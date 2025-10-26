@@ -53,7 +53,7 @@ export default function TablesPage() {
       const res = await fetch(apiPath('/api/admin/tables'))
       if (res.ok) {
         const data = await res.json()
-        setTables(data)
+setTables(data.tables || data)
       } else {
         toast.error('Masalar yüklenemedi')
       }

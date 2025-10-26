@@ -1,20 +1,49 @@
 import { NextResponse } from 'next/server'
 import clientPromise from '@/lib/mongodb'
 
-// GET - Tüm masaları listele
-export async function GET() {
+// GET - Tüm masaları listele (query parametreleriyle)
+export async function GET(request) {
   try {
     const client = await clientPromise
     const db = client.db('restaurant-qr')
+    
+    // 🆕 Query parametrelerini al
+    const { searchParams } = new URL(request.url)
+    const status = searchParams.get('status')
+    const location = searchParams.get('location')
+    
+    // 🆕 Query objesi oluştur
+    const query = {}
+    
+    if (status) {
+      query.status = status
+    }
+    
+    if (location) {
+      query.location = location
+    }
+    
+    console.log('📋 Tables query:', query)
+    
     const tables = await db.collection('tables')
-      .find({})
+      .find(query)
       .sort({ number: 1 })
       .toArray()
 
-    return NextResponse.json(tables)
+    console.log(`✅ Found ${tables.length} tables`)
+
+    // 🆕 Consistent response format
+    return NextResponse.json({
+      success: true,
+      tables,
+      count: tables.length
+    })
   } catch (error) {
     console.error('Tables GET error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    return NextResponse.json({ 
+      success: false,
+      error: 'Server error' 
+    }, { status: 500 })
   }
 }
 
@@ -26,7 +55,10 @@ export async function POST(request) {
 
     // Validasyon
     if (!number || !capacity) {
-      return NextResponse.json({ error: 'Masa numarası ve kapasite gerekli' }, { status: 400 })
+      return NextResponse.json({ 
+        success: false,
+        error: 'Masa numarası ve kapasite gerekli' 
+      }, { status: 400 })
     }
 
     const client = await clientPromise
@@ -35,7 +67,10 @@ export async function POST(request) {
     // Masa numarası unique kontrolü (string bazlı)
     const existingTable = await db.collection('tables').findOne({ number: number.trim() })
     if (existingTable) {
-      return NextResponse.json({ error: 'Bu masa numarası zaten kullanımda' }, { status: 400 })
+      return NextResponse.json({ 
+        success: false,
+        error: 'Bu masa numarası zaten kullanımda' 
+      }, { status: 400 })
     }
 
     const tableData = {
@@ -52,10 +87,16 @@ export async function POST(request) {
     const result = await db.collection('tables').insertOne(tableData)
     const newTable = await db.collection('tables').findOne({ _id: result.insertedId })
 
-    return NextResponse.json(newTable)
+    return NextResponse.json({
+      success: true,
+      table: newTable
+    })
   } catch (error) {
     console.error('Tables POST error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    return NextResponse.json({ 
+      success: false,
+      error: 'Server error' 
+    }, { status: 500 })
   }
 }
 
@@ -66,7 +107,10 @@ export async function PUT(request) {
     const { _id, number, capacity, location, status, notes, qrCode } = data
 
     if (!_id) {
-      return NextResponse.json({ error: 'Masa ID gerekli' }, { status: 400 })
+      return NextResponse.json({ 
+        success: false,
+        error: 'Masa ID gerekli' 
+      }, { status: 400 })
     }
 
     const client = await clientPromise
@@ -80,7 +124,10 @@ export async function PUT(request) {
         _id: { $ne: new ObjectId(_id) }
       })
       if (existingTable) {
-        return NextResponse.json({ error: 'Bu masa numarası zaten kullanımda' }, { status: 400 })
+        return NextResponse.json({ 
+          success: false,
+          error: 'Bu masa numarası zaten kullanımda' 
+        }, { status: 400 })
       }
     }
 
@@ -101,14 +148,23 @@ export async function PUT(request) {
     )
 
     if (result.matchedCount === 0) {
-      return NextResponse.json({ error: 'Masa bulunamadı' }, { status: 404 })
+      return NextResponse.json({ 
+        success: false,
+        error: 'Masa bulunamadı' 
+      }, { status: 404 })
     }
 
     const updatedTable = await db.collection('tables').findOne({ _id: new ObjectId(_id) })
-    return NextResponse.json(updatedTable)
+    return NextResponse.json({
+      success: true,
+      table: updatedTable
+    })
   } catch (error) {
     console.error('Tables PUT error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    return NextResponse.json({ 
+      success: false,
+      error: 'Server error' 
+    }, { status: 500 })
   }
 }
 
@@ -118,7 +174,10 @@ export async function DELETE(request) {
     const { id } = await request.json()
 
     if (!id) {
-      return NextResponse.json({ error: 'Masa ID gerekli' }, { status: 400 })
+      return NextResponse.json({ 
+        success: false,
+        error: 'Masa ID gerekli' 
+      }, { status: 400 })
     }
 
     const client = await clientPromise
@@ -127,7 +186,10 @@ export async function DELETE(request) {
 
     const table = await db.collection('tables').findOne({ _id: new ObjectId(id) })
     if (!table) {
-      return NextResponse.json({ error: 'Masa bulunamadı' }, { status: 404 })
+      return NextResponse.json({ 
+        success: false,
+        error: 'Masa bulunamadı' 
+      }, { status: 404 })
     }
 
     // Masanın aktif siparişi var mı kontrol et
@@ -138,6 +200,7 @@ export async function DELETE(request) {
 
     if (activeOrders) {
       return NextResponse.json({
+        success: false,
         error: 'Bu masanın aktif siparişi bulunuyor. Önce siparişleri tamamlayın.'
       }, { status: 400 })
     }
@@ -145,12 +208,21 @@ export async function DELETE(request) {
     const result = await db.collection('tables').deleteOne({ _id: new ObjectId(id) })
 
     if (result.deletedCount === 0) {
-      return NextResponse.json({ error: 'Masa silinemedi' }, { status: 400 })
+      return NextResponse.json({ 
+        success: false,
+        error: 'Masa silinemedi' 
+      }, { status: 400 })
     }
 
-    return NextResponse.json({ message: 'Masa başarıyla silindi' })
+    return NextResponse.json({ 
+      success: true,
+      message: 'Masa başarıyla silindi' 
+    })
   } catch (error) {
     console.error('Tables DELETE error:', error)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    return NextResponse.json({ 
+      success: false,
+      error: 'Server error' 
+    }, { status: 500 })
   }
 }

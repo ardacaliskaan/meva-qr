@@ -9,7 +9,7 @@ import {
   Coffee, Download, Printer, BarChart3, Activity, 
   Grid, List, Volume2, VolumeX, ShoppingCart,
   Settings, Bell, BellOff, Play,
-  Maximize, Minimize // 🆕 FULLSCREEN ICONS
+  Maximize, Minimize, Users // 🆕 FULLSCREEN ICONS + USERS
 } from 'lucide-react'
 import Image from 'next/image'
 import toast from 'react-hot-toast'
@@ -39,6 +39,13 @@ export default function AdminOrdersPage() {
   const [addingItem, setAddingItem] = useState(false)
   const [menuSearchTerm, setMenuSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('all')
+  
+  // 🆕 MASA AÇMA SİSTEMİ
+  const [showOpenTableModal, setShowOpenTableModal] = useState(false)
+  const [availableTables, setAvailableTables] = useState([])
+  const [loadingTables, setLoadingTables] = useState(false)
+  const [selectedTableToOpen, setSelectedTableToOpen] = useState(null)
+  const [openingTable, setOpeningTable] = useState(false)
   
   const [filterStatus, setFilterStatus] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
@@ -120,6 +127,7 @@ export default function AdminOrdersPage() {
   }, [soundEnabled, notificationEnabled])
 
   // Auto refresh (5 saniye)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     loadOrders()
     if (autoRefresh) {
@@ -129,6 +137,7 @@ export default function AdminOrdersPage() {
   }, [filterStatus, dateFilter, autoRefresh])
 
   // 🚨 Detect new orders
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (originalOrders.length > previousOrderCountRef.current && previousOrderCountRef.current > 0) {
       const diff = originalOrders.length - previousOrderCountRef.current
@@ -295,9 +304,9 @@ export default function AdminOrdersPage() {
     }
   }
 
-  const loadOrders = async () => {
+  const loadOrders = async (silent = false) => {
     try {
-      if (!loading) setRefreshing(true)
+      if (!silent && !loading) setRefreshing(true)
       
       const params = new URLSearchParams({
         groupByTable: 'true',
@@ -322,10 +331,74 @@ export default function AdminOrdersPage() {
       }
     } catch (error) {
       console.error('Load error:', error)
-      toast.error('Yükleme hatası')
+      if (!silent) toast.error('Yükleme hatası')
     } finally {
       setLoading(false)
-      setRefreshing(false)
+      if (!silent) setRefreshing(false)
+    }
+  }
+
+  // 🆕 LOAD AVAILABLE TABLES (Empty tables)
+  const loadAvailableTables = async () => {
+    try {
+      setLoadingTables(true)
+      const res = await fetch(apiPath('/api/admin/tables?status=empty'))
+      const data = await res.json()
+      
+      if (data.success) {
+        setAvailableTables(data.tables || [])
+      } else {
+        toast.error('Masalar yüklenemedi')
+      }
+    } catch (error) {
+      console.error('Tables load error:', error)
+      toast.error('Masa yükleme hatası')
+    } finally {
+      setLoadingTables(false)
+    }
+  }
+
+  // 🆕 OPEN TABLE (Create first order for table)
+  const handleOpenTable = async () => {
+    if (!selectedTableToOpen) {
+      toast.error('Lütfen bir masa seçin')
+      return
+    }
+
+    try {
+      setOpeningTable(true)
+
+      // Create empty order to open table
+      const response = await fetch(apiPath('/api/orders'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tableNumber: selectedTableToOpen.number,
+          tableId: selectedTableToOpen.number,
+          items: [],
+          totalAmount: 0,
+          customerNotes: 'Masa açıldı - sipariş bekleniyor',
+          status: 'pending'
+        })
+      })
+
+      const result = await response.json()
+
+      if (result.success) {
+        toast.success(`${selectedTableToOpen.number} numaralı masa açıldı! ✅`)
+        setShowOpenTableModal(false)
+        setSelectedTableToOpen(null)
+        
+        // Reload orders to show new table
+        await loadOrders()
+      } else {
+        toast.error(result.error || 'Masa açılamadı')
+      }
+    } catch (error) {
+      console.error('Open table error:', error)
+      toast.error('Masa açma hatası: ' + error.message)
+    } finally {
+      setOpeningTable(false)
     }
   }
 
@@ -374,14 +447,25 @@ export default function AdminOrdersPage() {
     try {
       setAddingItem(true)
 
+      // ID kontrolü
+      const productId = selectedProduct._id || selectedProduct.id || selectedProduct.menuItemId
+      
+      if (!productId) {
+        console.error('❌ Product has no valid ID:', selectedProduct)
+        toast.error('Ürün ID\'si bulunamadı. Lütfen menüyü yenileyin.')
+        return
+      }
+
       const newItem = {
-        menuItemId: selectedProduct._id || selectedProduct.id || selectedProduct.menuItemId,
+        menuItemId: productId,
         name: selectedProduct.name,
         price: selectedProduct.price,
         quantity: itemQuantity,
         notes: itemNotes,
         image: selectedProduct.image
       }
+
+      console.log('🆔 Using product ID:', productId)
 
       // Yeni sipariş oluştur veya mevcut siparişe ekle
       const activeOrder = selectedTable.orders?.find(o => 
@@ -422,18 +506,29 @@ export default function AdminOrdersPage() {
       const result = await response.json()
 
       if (result.success) {
-        toast.success(`${selectedProduct.name} eklendi! ✅`)
+        toast.success(
+          `${selectedProduct.name} x${itemQuantity} eklendi!`,
+          {
+            icon: '✅',
+            duration: 2000,
+            style: {
+              background: '#10B981',
+              color: '#fff',
+            }
+          }
+        )
         
-        // Modal'ı hemen kapat (hızlı feedback)
-        setShowAddItemModal(false)
+        // 🔄 MODAL KAPANMAZ! Sadece formu resetle
+        // setShowAddItemModal(false) // ❌ KALDIRILDI
         setSelectedProduct(null)
         setItemQuantity(1)
         setItemNotes('')
-        setMenuSearchTerm('')
-        setSelectedCategory('all')
+        // Arama ve kategori filtrelerini KORU
+        // setMenuSearchTerm('')  // ❌ KALDIRILDI
+        // setSelectedCategory('all')  // ❌ KALDIRILDI
         
-        // Arka planda siparişleri yeniden yükle
-        await loadOrders()
+        // Arka planda siparişleri yeniden yükle (silent)
+        loadOrders(true) // Silent refresh - toast göstermez
         
         // State güncellenmesini bekle ve masa detayını güncelle
         setTimeout(() => {
@@ -659,6 +754,20 @@ export default function AdminOrdersPage() {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
+              {/* 🆕 MASA AÇ BUTONU */}
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => {
+                  setShowOpenTableModal(true)
+                  loadAvailableTables()
+                }}
+                className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl font-bold shadow-lg hover:shadow-xl transition-all"
+              >
+                <Plus className="w-5 h-5" />
+                <span className="hidden sm:inline">Masa Aç</span>
+              </motion.button>
+
               {/* 🆕 Fullscreen Toggle Button */}
               <button
                 onClick={() => {
@@ -922,7 +1031,12 @@ export default function AdminOrdersPage() {
                             <span className="text-sm font-bold text-amber-600">₺{order.totalAmount.toFixed(2)}</span>
                           </div>
                           <div className="text-sm text-gray-700">
-                            {order.items?.length || 0} ürün
+                            {order.items?.map((item, idx) => (
+                              <div key={idx} className="flex items-center gap-1">
+                                <span className="font-medium">{item.quantity}x</span>
+                                <span className="truncate">{item.name}</span>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       ))}
@@ -1455,14 +1569,14 @@ export default function AdminOrdersPage() {
           </motion.div>
         )}
 
-        {/* 🆕 MANUEL ÜRÜN EKLEME MODALI */}
-        {showAddItemModal && (
+        {/* 🆕 MASA AÇMA MODALI */}
+        {showOpenTableModal && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
-            onClick={() => setShowAddItemModal(false)}
+            onClick={() => setShowOpenTableModal(false)}
           >
             <motion.div
               initial={{ scale: 0.9, y: 20 }}
@@ -1472,21 +1586,19 @@ export default function AdminOrdersPage() {
               onClick={(e) => e.stopPropagation()}
             >
               {/* Header */}
-              <div className="p-6 bg-gradient-to-r from-blue-500 to-indigo-600 text-white">
+              <div className="p-6 bg-gradient-to-r from-green-500 to-emerald-600 text-white">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
                       <Plus className="w-6 h-6" />
                     </div>
                     <div>
-                      <h2 className="text-2xl font-bold">Manuel Ürün Ekle</h2>
-                      <p className="text-sm opacity-90 mt-1">
-                        {selectedTable?.tableName || `Masa ${selectedTable?.tableNumber}`}
-                      </p>
+                      <h2 className="text-2xl font-bold">Masa Aç</h2>
+                      <p className="text-sm opacity-90 mt-1">Boş masa seçip sipariş almaya başlayın</p>
                     </div>
                   </div>
                   <button
-                    onClick={() => setShowAddItemModal(false)}
+                    onClick={() => setShowOpenTableModal(false)}
                     className="p-2 hover:bg-white/20 rounded-xl transition-colors"
                   >
                     <X className="w-6 h-6" />
@@ -1496,241 +1608,62 @@ export default function AdminOrdersPage() {
 
               {/* Body */}
               <div className="p-6 overflow-y-auto max-h-[calc(85vh-200px)]">
-                {loadingMenu ? (
+                {loadingTables ? (
                   <div className="text-center py-12">
                     <RefreshCw className="w-12 h-12 text-gray-400 animate-spin mx-auto mb-4" />
-                    <p className="text-gray-600">Menü yükleniyor...</p>
+                    <p className="text-gray-600">Masalar yükleniyor...</p>
+                  </div>
+                ) : availableTables.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                    <p className="text-gray-600 font-medium">Boş masa bulunamadı</p>
+                    <p className="text-sm text-gray-500 mt-2">Tüm masalar dolu veya masa eklemeniz gerekiyor</p>
                   </div>
                 ) : (
-                  <div className="space-y-6">
-                    {/* 🔍 ARAMA VE FİLTRELEME */}
-                    <div className="space-y-3">
-                      {/* Arama */}
-                      <div className="relative">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                        <input
-                          type="text"
-                          placeholder="Ürün ara... (isim, açıklama)"
-                          value={menuSearchTerm}
-                          onChange={(e) => setMenuSearchTerm(e.target.value)}
-                          className="w-full pl-12 pr-4 py-3 rounded-xl border-2 border-gray-200 focus:border-blue-500 outline-none transition-colors"
-                        />
-                        {menuSearchTerm && (
-                          <button
-                            onClick={() => setMenuSearchTerm('')}
-                            className="absolute right-4 top-1/2 -translate-y-1/2 p-1 hover:bg-gray-100 rounded-lg transition-colors"
-                          >
-                            <X className="w-4 h-4 text-gray-400" />
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Kategori Filtreleri */}
-                      {categories.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            onClick={() => setSelectedCategory('all')}
-                            className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                              selectedCategory === 'all'
-                                ? 'bg-blue-500 text-white shadow-lg'
-                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                            }`}
-                          >
-                            Tümü ({menuItems.length})
-                          </button>
-                          {categories.map((cat) => {
-                            const count = menuItems.filter(item => item.categoryId === cat._id).length
-                            return (
-                              <button
-                                key={cat._id}
-                                onClick={() => setSelectedCategory(cat._id)}
-                                className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                                  selectedCategory === cat._id
-                                    ? 'bg-blue-500 text-white shadow-lg'
-                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                                }`}
-                              >
-                                {cat.name} ({count})
-                              </button>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Ürün Seçimi */}
-                    <div>
-                      <label className="block text-sm font-bold text-gray-900 mb-3">
-                        <ShoppingCart className="w-4 h-4 inline mr-2" />
-                        Ürün Seç
-                        {(menuSearchTerm || selectedCategory !== 'all') && (
-                          <span className="ml-2 text-blue-600">
-                            ({menuItems.filter(item => {
-                              const matchesSearch = !menuSearchTerm || 
-                                item.name.toLowerCase().includes(menuSearchTerm.toLowerCase()) ||
-                                item.description?.toLowerCase().includes(menuSearchTerm.toLowerCase())
-                              const matchesCategory = selectedCategory === 'all' || item.categoryId === selectedCategory
-                              return matchesSearch && matchesCategory
-                            }).length} sonuç)
-                          </span>
-                        )}
-                      </label>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-96 overflow-y-auto p-1">
-                        {menuItems
-                          .filter(item => {
-                            // Arama filtresi
-                            const matchesSearch = !menuSearchTerm || 
-                              item.name.toLowerCase().includes(menuSearchTerm.toLowerCase()) ||
-                              item.description?.toLowerCase().includes(menuSearchTerm.toLowerCase())
-                            
-                            // Kategori filtresi
-                            const matchesCategory = selectedCategory === 'all' || item.categoryId === selectedCategory
-                            
-                            return matchesSearch && matchesCategory
-                          })
-                          .map((item) => (
-                          <motion.button
-                            key={item._id}
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
-                            onClick={() => setSelectedProduct(item)}
-                            className={`
-                              relative p-4 rounded-xl border-2 transition-all text-left
-                              ${selectedProduct?._id === item._id
-                                ? 'border-blue-500 bg-blue-50 shadow-lg'
-                                : 'border-gray-200 hover:border-blue-300 bg-white'
-                              }
-                            `}
-                          >
-                            <div className="flex items-start gap-3">
-                              {item.image ? (
-                                <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100">
-                                  <Image
-                                    src={item.image}
-                                    alt={item.name}
-                                    width={64}
-                                    height={64}
-                                    className="w-full h-full object-cover"
-                                  />
-                                </div>
-                              ) : (
-                                <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center flex-shrink-0">
-                                  <Coffee className="w-8 h-8 text-amber-600" />
-                                </div>
-                              )}
-                              <div className="flex-1 min-w-0">
-                                <h3 className="font-bold text-gray-900 truncate">{item.name}</h3>
-                                <p className="text-sm text-gray-600 mt-1 line-clamp-2">{item.description}</p>
-                                <p className="text-lg font-bold text-amber-600 mt-2">₺{item.price}</p>
-                              </div>
+                  <div>
+                    <p className="text-sm text-gray-600 mb-4">
+                      {availableTables.length} boş masa mevcut
+                    </p>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      {availableTables.map((table) => (
+                        <motion.button
+                          key={table._id}
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                          onClick={() => setSelectedTableToOpen(table)}
+                          className={`
+                            p-4 rounded-xl border-2 transition-all text-left
+                            ${selectedTableToOpen?._id === table._id
+                              ? 'border-green-500 bg-green-50 shadow-lg'
+                              : 'border-gray-200 hover:border-green-300 bg-white'
+                            }
+                          `}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="p-2 bg-gray-100 rounded-lg">
+                              <Users className="w-5 h-5 text-gray-600" />
                             </div>
-                            {selectedProduct?._id === item._id && (
+                            {selectedTableToOpen?._id === table._id && (
                               <motion.div
                                 initial={{ scale: 0 }}
                                 animate={{ scale: 1 }}
-                                className="absolute top-2 right-2 w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center"
+                                className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center"
                               >
                                 <CheckCircle className="w-4 h-4 text-white" />
                               </motion.div>
                             )}
-                          </motion.button>
-                        ))}
-                      </div>
-                      
-                      {/* Filtrelenmiş sonuç yoksa */}
-                      {menuItems.filter(item => {
-                        const matchesSearch = !menuSearchTerm || 
-                          item.name.toLowerCase().includes(menuSearchTerm.toLowerCase()) ||
-                          item.description?.toLowerCase().includes(menuSearchTerm.toLowerCase())
-                        const matchesCategory = selectedCategory === 'all' || item.categoryId === selectedCategory
-                        return matchesSearch && matchesCategory
-                      }).length === 0 && (
-                        <div className="text-center py-8 text-gray-500">
-                          <Search className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                          {menuSearchTerm || selectedCategory !== 'all' ? (
-                            <>
-                              <p className="font-bold">Ürün bulunamadı</p>
-                              <p className="text-sm mt-2">Farklı bir arama terimi veya kategori deneyin</p>
-                              <button
-                                onClick={() => {
-                                  setMenuSearchTerm('')
-                                  setSelectedCategory('all')
-                                }}
-                                className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-                              >
-                                Filtreleri Temizle
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <Coffee className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                              <p>Menüde ürün bulunamadı</p>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Miktar */}
-                    {selectedProduct && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="space-y-4 p-4 bg-gray-50 rounded-xl"
-                      >
-                        <div>
-                          <label className="block text-sm font-bold text-gray-900 mb-3">
-                            Miktar
-                          </label>
-                          <div className="flex items-center gap-4">
-                            <button
-                              onClick={() => setItemQuantity(Math.max(1, itemQuantity - 1))}
-                              className="w-12 h-12 rounded-xl bg-white border-2 border-gray-300 hover:border-red-500 hover:text-red-600 transition-colors flex items-center justify-center font-bold text-xl"
-                            >
-                              -
-                            </button>
-                            <div className="flex-1 text-center">
-                              <input
-                                type="number"
-                                min="1"
-                                value={itemQuantity}
-                                onChange={(e) => setItemQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                                className="w-full text-center text-3xl font-bold text-gray-900 bg-transparent outline-none"
-                              />
-                            </div>
-                            <button
-                              onClick={() => setItemQuantity(itemQuantity + 1)}
-                              className="w-12 h-12 rounded-xl bg-white border-2 border-gray-300 hover:border-green-500 hover:text-green-600 transition-colors flex items-center justify-center font-bold text-xl"
-                            >
-                              +
-                            </button>
                           </div>
-                        </div>
-
-                        {/* Notlar */}
-                        <div>
-                          <label className="block text-sm font-bold text-gray-900 mb-2">
-                            <MessageSquare className="w-4 h-4 inline mr-2" />
-                            Not (Opsiyonel)
-                          </label>
-                          <textarea
-                            value={itemNotes}
-                            onChange={(e) => setItemNotes(e.target.value)}
-                            placeholder="Örn: Az şekerli, soğuk..."
-                            rows={3}
-                            className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-blue-500 outline-none transition-colors resize-none"
-                          />
-                        </div>
-
-                        {/* Toplam */}
-                        <div className="flex items-center justify-between p-4 bg-white rounded-xl border-2 border-blue-200">
-                          <span className="text-gray-700 font-medium">Toplam Tutar:</span>
-                          <span className="text-2xl font-bold text-blue-600">
-                            ₺{(selectedProduct.price * itemQuantity).toFixed(2)}
-                          </span>
-                        </div>
-                      </motion.div>
-                    )}
+                          <h3 className="font-bold text-gray-900 text-lg">Masa {table.number}</h3>
+                          {table.location && (
+                            <p className="text-xs text-gray-500 mt-1">{table.location}</p>
+                          )}
+                          <div className="flex items-center gap-2 mt-2">
+                            <Users className="w-3 h-3 text-gray-400" />
+                            <span className="text-xs text-gray-600">{table.capacity} kişilik</span>
+                          </div>
+                        </motion.button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1739,34 +1672,421 @@ export default function AdminOrdersPage() {
               <div className="p-6 border-t border-gray-200 bg-gray-50">
                 <div className="flex gap-3">
                   <button
-                    onClick={() => setShowAddItemModal(false)}
+                    onClick={() => setShowOpenTableModal(false)}
                     className="flex-1 px-6 py-3 rounded-xl border-2 border-gray-300 text-gray-700 font-bold hover:bg-gray-100 transition-colors"
                   >
                     İptal
                   </button>
                   <button
-                    onClick={handleAddItemToTable}
-                    disabled={!selectedProduct || addingItem}
+                    onClick={handleOpenTable}
+                    disabled={!selectedTableToOpen || openingTable}
                     className={`
                       flex-1 px-6 py-3 rounded-xl font-bold transition-all
-                      ${!selectedProduct || addingItem
+                      ${!selectedTableToOpen || openingTable
                         ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                        : 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white hover:shadow-lg'
+                        : 'bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:shadow-lg'
                       }
                     `}
                   >
-                    {addingItem ? (
+                    {openingTable ? (
                       <span className="flex items-center justify-center gap-2">
                         <RefreshCw className="w-5 h-5 animate-spin" />
-                        Ekleniyor...
+                        Açılıyor...
                       </span>
                     ) : (
                       <span className="flex items-center justify-center gap-2">
                         <Plus className="w-5 h-5" />
-                        Ekle
+                        Masa Aç
                       </span>
                     )}
                   </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+
+        {/* 🆕 GELIŞMIŞ MANUEL ÜRÜN EKLEME MODALI - POS STYLE */}
+        {showAddItemModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[60] flex items-center justify-center p-2 sm:p-4"
+            onClick={() => setShowAddItemModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-7xl h-[95vh] overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* 📌 HEADER - Sticky */}
+              <div className="flex-shrink-0 p-4 sm:p-6 bg-gradient-to-r from-blue-500 to-indigo-600 text-white">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 sm:p-3 bg-white/20 rounded-xl backdrop-blur-sm">
+                      <Plus className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </div>
+                    <div>
+                      <h2 className="text-xl sm:text-2xl font-bold">Hızlı Sipariş</h2>
+                      <p className="text-xs sm:text-sm opacity-90 mt-0.5">
+                        {selectedTable?.tableName || `Masa ${selectedTable?.tableNumber}`}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowAddItemModal(false)}
+                    className="p-2 hover:bg-white/20 rounded-xl transition-colors"
+                  >
+                    <X className="w-5 h-5 sm:w-6 sm:h-6" />
+                  </button>
+                </div>
+
+                {/* 🔍 ARAMA BAR - Sticky */}
+                <div className="mt-4">
+                  <div className="relative">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/50" />
+                    <input
+                      type="text"
+                      placeholder="Ürün ara..."
+                      value={menuSearchTerm}
+                      onChange={(e) => setMenuSearchTerm(e.target.value)}
+                      className="w-full pl-12 pr-4 py-3 rounded-xl bg-white/20 backdrop-blur-sm border-2 border-white/30 text-white placeholder-white/60 focus:bg-white/30 focus:border-white/50 outline-none transition-all"
+                    />
+                    {menuSearchTerm && (
+                      <button
+                        onClick={() => setMenuSearchTerm('')}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 p-1 hover:bg-white/20 rounded-lg transition-colors"
+                      >
+                        <X className="w-4 h-4 text-white" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* 📁 KATEGORİ FİLTRELERİ - Sticky */}
+                {categories.length > 0 && (
+                  <div className="mt-4 flex gap-2 overflow-x-auto pb-2" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                    <style jsx>{`
+                      div::-webkit-scrollbar {
+                        display: none;
+                      }
+                    `}</style>
+                    <button
+                      onClick={() => setSelectedCategory('all')}
+                      className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-all ${
+                        selectedCategory === 'all'
+                          ? 'bg-white text-blue-600 shadow-lg'
+                          : 'bg-white/20 text-white hover:bg-white/30'
+                      }`}
+                    >
+                      Tümü
+                    </button>
+                    {categories.map((cat) => (
+                      <button
+                        key={cat._id}
+                        onClick={() => setSelectedCategory(cat._id)}
+                        className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-all whitespace-nowrap ${
+                          selectedCategory === cat._id
+                            ? 'bg-white text-blue-600 shadow-lg'
+                            : 'bg-white/20 text-white hover:bg-white/30'
+                        }`}
+                      >
+                        {cat.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 📦 BODY - Split Layout */}
+              <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
+                {loadingMenu ? (
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="text-center">
+                      <RefreshCw className="w-12 h-12 text-gray-400 animate-spin mx-auto mb-4" />
+                      <p className="text-gray-600">Menü yükleniyor...</p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* 🍕 SOL: ÜRÜN GRİD */}
+                    <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                        {menuItems
+                          .filter(item => {
+                            const matchesSearch = !menuSearchTerm || 
+                              item.name.toLowerCase().includes(menuSearchTerm.toLowerCase()) ||
+                              item.description?.toLowerCase().includes(menuSearchTerm.toLowerCase())
+                            const matchesCategory = selectedCategory === 'all' || item.categoryId === selectedCategory
+                            return matchesSearch && matchesCategory
+                          })
+                          .map((item) => (
+                            <motion.button
+                              key={item._id}
+                              whileHover={{ scale: 1.02 }}
+                              whileTap={{ scale: 0.98 }}
+                              onClick={() => setSelectedProduct(item)}
+                              className={`
+                                relative p-3 sm:p-4 rounded-xl border-2 transition-all text-left h-full
+                                ${selectedProduct?._id === item._id
+                                  ? 'border-blue-500 bg-blue-50 shadow-lg'
+                                  : 'border-gray-200 hover:border-blue-300 bg-white hover:shadow-md'
+                                }
+                              `}
+                            >
+                              {/* Image */}
+                              {item.image ? (
+                                <div className="w-full aspect-square rounded-lg overflow-hidden mb-2 bg-gray-100">
+                                  <Image
+                                    src={item.image}
+                                    alt={item.name}
+                                    width={200}
+                                    height={200}
+                                    className="w-full h-full object-cover"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="w-full aspect-square rounded-lg bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center mb-2">
+                                  <Coffee className="w-8 h-8 text-amber-600" />
+                                </div>
+                              )}
+
+                              {/* Info */}
+                              <div>
+                                <h3 className="font-bold text-sm sm:text-base text-gray-900 mb-1 line-clamp-2">
+                                  {item.name}
+                                </h3>
+                                <p className="text-lg sm:text-xl font-bold text-blue-600">
+                                  ₺{item.price}
+                                </p>
+                              </div>
+
+                              {/* Selected Badge */}
+                              {selectedProduct?._id === item._id && (
+                                <motion.div
+                                  initial={{ scale: 0 }}
+                                  animate={{ scale: 1 }}
+                                  className="absolute top-2 right-2 w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center shadow-lg"
+                                >
+                                  <CheckCircle className="w-5 h-5 text-white" />
+                                </motion.div>
+                              )}
+                            </motion.button>
+                          ))}
+                      </div>
+
+                      {/* Sonuç Yok */}
+                      {menuItems.filter(item => {
+                        const matchesSearch = !menuSearchTerm || 
+                          item.name.toLowerCase().includes(menuSearchTerm.toLowerCase()) ||
+                          item.description?.toLowerCase().includes(menuSearchTerm.toLowerCase())
+                        const matchesCategory = selectedCategory === 'all' || item.categoryId === selectedCategory
+                        return matchesSearch && matchesCategory
+                      }).length === 0 && (
+                        <div className="text-center py-12 text-gray-500">
+                          <Search className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                          <p className="font-bold text-lg mb-2">Ürün bulunamadı</p>
+                          <p className="text-sm mb-4">Farklı bir arama terimi veya kategori deneyin</p>
+                          <button
+                            onClick={() => {
+                              setMenuSearchTerm('')
+                              setSelectedCategory('all')
+                            }}
+                            className="px-6 py-3 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors font-medium"
+                          >
+                            Filtreleri Temizle
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 📋 SAĞ: SEÇİLİ ÜRÜN & MİKTAR */}
+                    <div className="w-full lg:w-96 border-t lg:border-t-0 lg:border-l border-gray-200 bg-gray-50 flex flex-col">
+                      {selectedProduct ? (
+                        <div className="flex-1 flex flex-col p-4 sm:p-6 overflow-y-auto">
+                          {/* Ürün Özeti */}
+                          <div className="bg-white rounded-xl p-4 mb-4 shadow-sm">
+                            <div className="flex items-start gap-3 mb-4">
+                              {selectedProduct.image ? (
+                                <div className="w-20 h-20 rounded-lg overflow-hidden flex-shrink-0 bg-gray-100">
+                                  <Image
+                                    src={selectedProduct.image}
+                                    alt={selectedProduct.name}
+                                    width={80}
+                                    height={80}
+                                    className="w-full h-full object-cover"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="w-20 h-20 rounded-lg bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center flex-shrink-0">
+                                  <Coffee className="w-10 h-10 text-amber-600" />
+                                </div>
+                              )}
+                              <div className="flex-1">
+                                <h3 className="font-bold text-lg text-gray-900 mb-1">
+                                  {selectedProduct.name}
+                                </h3>
+                                <p className="text-sm text-gray-600 line-clamp-2">
+                                  {selectedProduct.description}
+                                </p>
+                                <p className="text-2xl font-bold text-blue-600 mt-2">
+                                  ₺{selectedProduct.price}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Miktar Seçimi - BIG BUTTONS */}
+                          <div className="mb-4">
+                            <label className="block text-sm font-bold text-gray-900 mb-3">
+                              Miktar
+                            </label>
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={() => setItemQuantity(Math.max(1, itemQuantity - 1))}
+                                className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-white border-2 border-gray-300 hover:border-red-500 hover:bg-red-50 hover:text-red-600 transition-all flex items-center justify-center font-bold text-3xl shadow-sm active:scale-95"
+                              >
+                                -
+                              </button>
+                              <div className="flex-1">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={itemQuantity}
+                                  onChange={(e) => setItemQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                                  className="w-full text-center text-4xl sm:text-5xl font-bold text-gray-900 bg-white rounded-xl border-2 border-gray-300 py-4 outline-none focus:border-blue-500 transition-colors"
+                                />
+                              </div>
+                              <button
+                                onClick={() => setItemQuantity(itemQuantity + 1)}
+                                className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl bg-white border-2 border-gray-300 hover:border-green-500 hover:bg-green-50 hover:text-green-600 transition-all flex items-center justify-center font-bold text-3xl shadow-sm active:scale-95"
+                              >
+                                +
+                              </button>
+                            </div>
+
+                            {/* Quick Amount Buttons */}
+                            <div className="flex gap-2 mt-3">
+                              {[1, 2, 3, 5].map(num => (
+                                <button
+                                  key={num}
+                                  onClick={() => setItemQuantity(num)}
+                                  className={`flex-1 py-2 rounded-lg font-bold transition-all ${
+                                    itemQuantity === num
+                                      ? 'bg-blue-500 text-white shadow-md'
+                                      : 'bg-white text-gray-700 border border-gray-300 hover:border-blue-500'
+                                  }`}
+                                >
+                                  {num}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Not */}
+                          <div className="mb-4">
+                            <label className="block text-sm font-bold text-gray-900 mb-2">
+                              <MessageSquare className="w-4 h-4 inline mr-2" />
+                              Not (Opsiyonel)
+                            </label>
+                            <textarea
+                              value={itemNotes}
+                              onChange={(e) => setItemNotes(e.target.value)}
+                              placeholder="Örn: Az şekerli, soğuk..."
+                              rows={3}
+                              className="w-full px-4 py-3 rounded-xl border-2 border-gray-300 focus:border-blue-500 outline-none transition-colors resize-none text-sm"
+                            />
+                          </div>
+
+                          {/* Spacer */}
+                          <div className="flex-1"></div>
+
+                          {/* Toplam */}
+                          <div className="mb-4 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-gray-700 font-medium">Birim Fiyat:</span>
+                              <span className="text-lg font-bold text-gray-900">₺{selectedProduct.price}</span>
+                            </div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-gray-700 font-medium">Miktar:</span>
+                              <span className="text-lg font-bold text-gray-900">x{itemQuantity}</span>
+                            </div>
+                            <div className="border-t-2 border-blue-300 pt-2 flex items-center justify-between">
+                              <span className="text-gray-900 font-bold">Toplam:</span>
+                              <span className="text-3xl font-bold text-blue-600">
+                                ₺{(selectedProduct.price * itemQuantity).toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Hızlı Ekle Butonu */}
+                          <button
+                            onClick={handleAddItemToTable}
+                            disabled={addingItem}
+                            className="w-full py-4 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold text-lg hover:from-green-600 hover:to-emerald-700 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 flex items-center justify-center gap-2"
+                          >
+                            {addingItem ? (
+                              <>
+                                <RefreshCw className="w-5 h-5 animate-spin" />
+                                Ekleniyor...
+                              </>
+                            ) : (
+                              <>
+                                <Plus className="w-5 h-5" />
+                                Hızlı Ekle
+                              </>
+                            )}
+                          </button>
+
+                          <p className="text-xs text-center text-gray-500 mt-2">
+                            Modal kapanmaz, devam edebilirsiniz
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="flex-1 flex items-center justify-center p-6 text-center">
+                          <div>
+                            <div className="w-24 h-24 mx-auto mb-4 bg-gradient-to-br from-gray-100 to-gray-200 rounded-full flex items-center justify-center">
+                              <ShoppingCart className="w-12 h-12 text-gray-400" />
+                            </div>
+                            <h3 className="text-lg font-bold text-gray-900 mb-2">
+                              Ürün Seçin
+                            </h3>
+                            <p className="text-sm text-gray-600">
+                              Soldan eklemek istediğiniz ürünü seçin
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* 📌 FOOTER - Action Buttons */}
+              <div className="flex-shrink-0 p-4 border-t border-gray-200 bg-white">
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowAddItemModal(false)}
+                    className="flex-1 px-6 py-3 rounded-xl border-2 border-gray-300 text-gray-700 font-bold hover:bg-gray-100 transition-colors"
+                  >
+                    Kapat
+                  </button>
+                  <div className="text-sm text-gray-600 flex items-center gap-2 px-4">
+                            <span className="font-medium">Ürün sayısı:</span>
+                    <span className="font-bold text-blue-600">
+                      {menuItems.filter(item => {
+                        const matchesSearch = !menuSearchTerm || 
+                          item.name.toLowerCase().includes(menuSearchTerm.toLowerCase()) ||
+                          item.description?.toLowerCase().includes(menuSearchTerm.toLowerCase())
+                        const matchesCategory = selectedCategory === 'all' || item.categoryId === selectedCategory
+                        return matchesSearch && matchesCategory
+                      }).length}
+                    </span>
+                  </div>
                 </div>
               </div>
             </motion.div>

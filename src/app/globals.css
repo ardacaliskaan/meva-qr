@@ -62,3 +62,41 @@ textarea::placeholder {
 .siyah-yazi{
   color:black;
 }
+/* ================================================
+   🎨 SCROLLBAR HIDE UTILITY
+   Bu kodu globals.css dosyanıza ekleyin
+   ================================================ */
+
+/* Horizontal scroll için scrollbar gizle (kategori butonları için) */
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;  /* Chrome, Safari, Opera */
+}
+
+/* ================================================
+   🎯 BONUS: Custom Scrollbar (isteğe bağlı)
+   Diğer scroll alanları için
+   ================================================ */
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}

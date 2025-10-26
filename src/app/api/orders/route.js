@@ -42,32 +42,45 @@ function validateOrder(data) {
     errors.push('Masa numarası veya masa ID gerekli')
   }
   
-  if (!data.items || !Array.isArray(data.items) || data.items.length === 0) {
-    errors.push('En az bir ürün seçilmelidir')
-  }
+  // 🆕 MASA AÇMA DESTEĞİ: Boş items array'ine izin ver
+  const isTableOpening = (
+    (!data.items || data.items.length === 0) && 
+    (data.totalAmount === 0 || data.totalAmount === undefined) &&
+    (data.customerNotes?.includes('Masa açıldı') || 
+     data.customerNotes?.includes('sipariş bekleniyor') ||
+     data.customerNotes?.toLowerCase().includes('table opened'))
+  )
   
-  if (data.items && Array.isArray(data.items)) {
-    data.items.forEach((item, index) => {
-      if (!item.menuItemId) {
-        errors.push(`${index + 1}. ürün ID'si eksik`)
-      }
-      
-      if (!item.name || item.name.trim().length < 2) {
-        errors.push(`${index + 1}. ürün adı geçersiz`)
-      }
-      
-      if (!item.price || item.price <= 0) {
-        errors.push(`${index + 1}. ürün fiyatı geçersiz`)
-      }
-      
-      if (!item.quantity || item.quantity < 1 || item.quantity > 99) {
-        errors.push(`${index + 1}. ürün miktarı geçersiz`)
-      }
-    })
-  }
-  
-  if (data.totalAmount !== undefined && (data.totalAmount <= 0 || data.totalAmount > 100000)) {
-    errors.push('Toplam tutar geçersiz')
+  // Items validation - SADECE masa açma değilse kontrol et
+  if (!isTableOpening) {
+    if (!data.items || !Array.isArray(data.items) || data.items.length === 0) {
+      errors.push('En az bir ürün seçilmelidir')
+    }
+    
+    if (data.items && Array.isArray(data.items)) {
+      data.items.forEach((item, index) => {
+        if (!item.menuItemId) {
+          errors.push(`${index + 1}. ürün ID'si eksik`)
+        }
+        
+        if (!item.name || item.name.trim().length < 2) {
+          errors.push(`${index + 1}. ürün adı geçersiz`)
+        }
+        
+        if (!item.price || item.price <= 0) {
+          errors.push(`${index + 1}. ürün fiyatı geçersiz`)
+        }
+        
+        if (!item.quantity || item.quantity < 1 || item.quantity > 99) {
+          errors.push(`${index + 1}. ürün miktarı geçersiz`)
+        }
+      })
+    }
+    
+    // TotalAmount validation - sadece normal sipariş için
+    if (data.totalAmount !== undefined && (data.totalAmount <= 0 || data.totalAmount > 100000)) {
+      errors.push('Toplam tutar geçersiz')
+    }
   }
   
   return errors
@@ -359,38 +372,71 @@ export async function POST(request) {
       }
     }
     
-    // Menu items check
-    const menuItemIds = data.items.map(item => item.menuItemId)
-    console.log('🍕 Menu item IDs:', menuItemIds)
+    // Menu items check - IMPROVED: Supports both ObjectId and string IDs
+    // 🆕 SKIP if no items (table opening scenario)
+    let validMenuItems = []
+    let menuItemIds = []
     
-    const validObjectIds = menuItemIds.filter(id => 
-      id && id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id)
-    )
-    
-    console.log('✅ Valid ObjectIds:', validObjectIds)
-    
-    if (validObjectIds.length !== menuItemIds.length) {
-      console.log('❌ Invalid menu item IDs found')
-      return NextResponse.json(
-        { success: false, error: 'Geçersiz ürün ID\'leri bulundu' },
-        { status: 400 }
+    if (data.items && data.items.length > 0) {
+      menuItemIds = data.items.map(item => item.menuItemId)
+      console.log('🍕 Menu item IDs:', menuItemIds)
+      
+      // Get UNIQUE IDs (same product can be ordered multiple times with different customizations)
+      const uniqueMenuItemIds = [...new Set(menuItemIds)]
+      console.log('🔑 Unique menu item IDs:', uniqueMenuItemIds)
+      
+      // Separate ObjectIds and regular strings
+      const validObjectIds = uniqueMenuItemIds.filter(id => 
+        id && id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id)
       )
-    }
-    
-    const validMenuItems = await db.collection('menu')
-      .find({ 
-        _id: { $in: validObjectIds.map(id => new ObjectId(id)) },
+      const stringIds = uniqueMenuItemIds.filter(id => 
+        id && !(id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id))
+      )
+      
+      console.log('✅ Valid ObjectIds:', validObjectIds)
+      console.log('📝 String IDs:', stringIds)
+      
+      // Build query to check both _id (ObjectId) and id (string)
+      const menuQuery = {
+        $or: [],
         available: { $ne: false }
-      })
-      .toArray()
-    
-    console.log('🍕 Found menu items:', validMenuItems.length)
-    
-    if (validMenuItems.length !== menuItemIds.length) {
-      return NextResponse.json(
-        { success: false, error: 'Bazı ürünler bulunamadı veya müsait değil' },
-        { status: 400 }
-      )
+      }
+      
+      if (validObjectIds.length > 0) {
+        menuQuery.$or.push({ _id: { $in: validObjectIds.map(id => new ObjectId(id)) } })
+      }
+      
+      if (stringIds.length > 0) {
+        menuQuery.$or.push({ id: { $in: stringIds } })
+      }
+      
+      // If no valid IDs at all
+      if (menuQuery.$or.length === 0) {
+        console.log('❌ No valid menu item IDs found')
+        return NextResponse.json(
+          { success: false, error: 'Geçersiz ürün ID\'leri' },
+          { status: 400 }
+        )
+      }
+      
+      validMenuItems = await db.collection('menu')
+        .find(menuQuery)
+        .toArray()
+      
+      console.log('🍕 Found menu items:', validMenuItems.length, '/', uniqueMenuItemIds.length, '(unique)')
+      
+      // Check if ALL unique items exist (same item can be ordered multiple times)
+      if (validMenuItems.length !== uniqueMenuItemIds.length) {
+        console.log('❌ Some items not found. Requested:', uniqueMenuItemIds, 'Found:', validMenuItems.map(i => i._id || i.id))
+        return NextResponse.json(
+          { success: false, error: 'Bazı ürünler bulunamadı veya müsait değil' },
+          { status: 400 }
+        )
+      }
+      
+      console.log('✅ All menu items validated. Total items in order:', menuItemIds.length, '(including duplicates with different customizations)')
+    } else {
+      console.log('⚠️ No items provided - assuming table opening scenario')
     }
     
     // Create order
@@ -400,13 +446,14 @@ export async function POST(request) {
       tableNumber: data.tableNumber?.toString() || null,
       tableId: data.tableId?.toString() || null,
       sessionId: data.sessionId || null,
-      items: data.items.map(item => ({
+      items: (data.items || []).map(item => ({
         ...item,
         status: ORDER_STATUSES.PENDING,
         addedAt: now
       })),
-      totalAmount: data.totalAmount || data.items.reduce((sum, item) => 
-        sum + (item.price * item.quantity), 0
+      totalAmount: data.totalAmount || (data.items && data.items.length > 0 
+        ? data.items.reduce((sum, item) => sum + (item.price * item.quantity), 0)
+        : 0
       ),
       status: ORDER_STATUSES.PENDING,
       paymentStatus: PAYMENT_STATUSES.UNPAID,
@@ -432,17 +479,21 @@ export async function POST(request) {
       }
     }
     
-    // Estimated time calculation
-    let totalEstimatedTime = 0
-    data.items.forEach(item => {
-      const menuItem = validMenuItems.find(mi => mi._id.toString() === item.menuItemId)
-      if (menuItem && menuItem.cookingTime) {
-        totalEstimatedTime += menuItem.cookingTime * item.quantity
+    // Estimated time calculation - ONLY if items exist
+    if (data.items && data.items.length > 0 && validMenuItems && validMenuItems.length > 0) {
+      let totalEstimatedTime = 0
+      data.items.forEach(item => {
+        const menuItem = validMenuItems.find(mi => 
+          mi._id.toString() === item.menuItemId || mi.id === item.menuItemId
+        )
+        if (menuItem && menuItem.cookingTime) {
+          totalEstimatedTime += menuItem.cookingTime * item.quantity
+        }
+      })
+      
+      if (totalEstimatedTime > 0) {
+        order.estimatedTime = Math.ceil(totalEstimatedTime / data.items.length)
       }
-    })
-    
-    if (totalEstimatedTime > 0) {
-      order.estimatedTime = Math.ceil(totalEstimatedTime / data.items.length)
     }
     
     // Insert order
