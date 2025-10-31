@@ -88,8 +88,8 @@ export default function MenuFooter() {
       return
     }
 
-    if (message.trim().length < 10) {
-      toast.error('Mesajınız en az 10 karakter olmalıdır')
+    if (message.trim().length < 5) {
+      toast.error('Mesajınız en az 5 karakter olmalıdır')
       return
     }
 
@@ -100,21 +100,44 @@ export default function MenuFooter() {
 
     try {
       setSubmitting(true)
+      
+      console.log('📤 Feedback gönderiliyor...', {
+        category: selectedCategory,
+        rating: rating || null,
+        message: message.trim()
+      })
 
       const response = await fetch(apiPath('/api/feedback'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify({
           category: selectedCategory,
           rating: rating || null,
-          message: message.trim(),
-          timestamp: new Date().toISOString()
+          message: message.trim()
         })
       })
 
-      const data = await response.json()
+      console.log('📥 Response status:', response.status)
+      
+      // Response'u text olarak al
+      const responseText = await response.text()
+      console.log('📥 Response text:', responseText)
+      
+      // JSON parse et
+      let data
+      try {
+        data = JSON.parse(responseText)
+      } catch (parseError) {
+        console.error('❌ JSON parse hatası:', parseError)
+        throw new Error('Sunucu yanıtı okunamadı')
+      }
+      
+      console.log('📥 Parsed data:', data)
 
-      if (data.success) {
+      if (response.ok && data.success) {
         toast.success('Görüşünüz için teşekkür ederiz! 💚', {
           duration: 4000,
           icon: '✨'
@@ -126,11 +149,13 @@ export default function MenuFooter() {
         setMessage('')
         setShowFeedbackModal(false)
       } else {
-        toast.error(data.error || 'Bir hata oluştu')
+        // API'den gelen hata mesajını göster
+        toast.error(data.error || data.message || 'Bir hata oluştu')
+        console.error('❌ API Error:', data)
       }
     } catch (error) {
-      console.error('Feedback error:', error)
-      toast.error('Bağlantı hatası. Lütfen tekrar deneyin.')
+      console.error('❌ Feedback error:', error)
+      toast.error('Bağlantı hatası: ' + error.message)
     } finally {
       setSubmitting(false)
     }
@@ -166,7 +191,7 @@ export default function MenuFooter() {
             })}
           </div>
 
-          {/* 🆕 FEEDBACK CTA BUTTON */}
+          {/* FEEDBACK CTA BUTTON */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -266,7 +291,7 @@ export default function MenuFooter() {
         </div>
       </footer>
 
-      {/* 🆕 FEEDBACK MODAL */}
+      {/* FEEDBACK MODAL */}
       <AnimatePresence>
         {showFeedbackModal && (
           <motion.div
@@ -398,7 +423,7 @@ export default function MenuFooter() {
                   />
                   <div className="flex items-center justify-between mt-2">
                     <p className="text-xs text-gray-500">
-                      En az 10 karakter
+                      En az 5 karakter
                     </p>
                     <p className={`text-xs ${message.length > 900 ? 'text-red-600' : 'text-gray-500'}`}>
                       {message.length} / 1000

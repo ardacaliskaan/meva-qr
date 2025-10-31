@@ -30,8 +30,10 @@ import {
   ChevronRight, // 🆕 Expand icon
   User,
   HelpCircle,
+  BarChart3,  // 🆕 EKLE
   Activity,
   Clock,
+  MessageSquare,  // 🆕 EKLE
   CheckCircle
 } from 'lucide-react'
 
@@ -41,8 +43,10 @@ const menuItems = [
   { href: '/admin/ingredients', icon: ChefHat, label: 'Malzemeler', badge: null },
   { href: '/admin/menu', icon: MenuIcon, label: 'Menü', badge: null },
   { href: '/admin/tables', icon: Users, label: 'Masalar', badge: null },
+  { href: '/admin/reports', icon: BarChart3, label: 'Raporlar', badge: null }, // 🆕 EKLE
   { href: '/admin/orders', icon: ShoppingCart, label: 'Siparişler', badge: 'hot' },
   { href: '/admin/sessions', icon: Wifi, label: 'Oturumlar', badge: null },
+  { href: '/admin/feedback', icon: MessageSquare, label: 'Geri Bildirimler', badge: null }, // 🆕 EKLE
   { href: '/admin/qr', icon: QrCode, label: 'QR Kodlar', badge: null },
   { href: '/admin/users', icon: UserCog, label: 'Kullanıcılar', badge: null },
 ]

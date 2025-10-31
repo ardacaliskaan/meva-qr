@@ -416,13 +416,27 @@ export default function AdminOrdersPage() {
       const catData = await catRes.json()
       
       if (menuData.success) {
-        setMenuItems(menuData.items || [])
+        const items = menuData.items || []
+        setMenuItems(items)
+        console.log('📦 Menu items loaded:', items.length)
+        console.log('🔍 Sample item:', {
+          name: items[0]?.name,
+          categoryId: items[0]?.categoryId,
+          subcategoryId: items[0]?.subcategoryId
+        })
+        // Alt kategorili ürün sayısını göster
+        const withSubcat = items.filter(i => i.subcategoryId).length
+        console.log('📊 Items with subcategory:', withSubcat)
       } else {
         toast.error('Menü yüklenemedi')
       }
       
       if (catData.success) {
-        setCategories(catData.categories || [])
+        // ✅ FIX: flatCategories kullan (categories yerine)
+        const cats = catData.flatCategories || catData.categories || []
+        setCategories(cats)
+        console.log('📁 Categories loaded:', cats.length)
+        console.log('🔍 Sample category structure:', cats[0])
       }
     } catch (error) {
       console.error('Menu load error:', error)
@@ -579,26 +593,54 @@ export default function AdminOrdersPage() {
     }
   }
 
-  const deleteOrder = async (orderId) => {
-    if (!confirm('Bu siparişi silmek istediğinizden emin misiniz?')) return
+const deleteOrder = async (orderId) => {
+  if (!orderId) {
+    toast.error('Sipariş ID bulunamadı!')
+    console.error('❌ deleteOrder called with undefined ID')
+    return
+  }
 
-    try {
-      const res = await fetch(apiPath(`/api/orders?id=${orderId}`), { method: 'DELETE' })
-      const result = await res.json()
+  if (!confirm('Bu siparişi silmek istediğinizden emin misiniz?')) return
+
+  try {
+    console.log('🗑️ Deleting order:', orderId)
+    
+    const res = await fetch(apiPath(`/api/orders?id=${orderId}`), { method: 'DELETE' })
+    const result = await res.json()
+    
+    if (result.success) {
+      toast.success('Sipariş silindi', { 
+        icon: '✅',
+        duration: 2000
+      })
       
-      if (result.success) {
-        toast.success('Sipariş silindi')
-        loadOrders()
-        if (selectedTable) {
-          const updatedTable = orders.find(t => t.tableNumber === selectedTable.tableNumber)
-          setSelectedTable(updatedTable || null)
-          if (!updatedTable) setShowModal(false)
+      // Silent refresh
+      await loadOrders(true)
+      
+      // 300ms bekle (state güncellenmesi için)
+      await new Promise(resolve => setTimeout(resolve, 300))
+      
+      if (selectedTable) {
+        const updatedTable = orders.find(t => t.tableNumber === selectedTable.tableNumber)
+        
+        if (updatedTable && updatedTable.orders?.length > 0) {
+          // Hala sipariş var, modal açık kalsın
+          setSelectedTable(updatedTable)
+        } else {
+          // Hiç sipariş kalmadı, modal'ı kapat
+          setSelectedTable(null)
+          setShowModal(false)
+          toast.success('Masadaki tüm siparişler silindi', { icon: '🎉' })
         }
       }
-    } catch (error) {
-      toast.error('Silme hatası')
+    } else {
+      toast.error(result.error || 'Silme hatası')
     }
+  } catch (error) {
+    console.error('Delete error:', error)
+    toast.error('Silme hatası: ' + error.message)
   }
+}
 
   const closeTable = async (tableNumber) => {
     if (!tableNumber) {
@@ -1460,13 +1502,13 @@ export default function AdminOrdersPage() {
 
                     {/* Delete Order */}
                     <div className="mt-4 pt-4 border-t border-gray-300">
-                      <button
-                        onClick={() => deleteOrder(order.id)}
-                        className="w-full sm:w-auto px-4 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        Bu Siparişi Sil
-                      </button>
+                    <button
+  onClick={() => deleteOrder(order._id || order.id)}
+  className="w-full sm:w-auto px-4 py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+>
+  <Trash2 className="w-4 h-4" />
+  Bu Siparişi Sil
+</button>
                     </div>
                   </div>
                 ))}
@@ -1787,10 +1829,10 @@ export default function AdminOrdersPage() {
                     </button>
                     {categories.map((cat) => (
                       <button
-                        key={cat._id}
-                        onClick={() => setSelectedCategory(cat._id)}
+                        key={cat.id || cat._id}
+                        onClick={() => setSelectedCategory(cat.id || cat._id)}
                         className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-all whitespace-nowrap ${
-                          selectedCategory === cat._id
+                          selectedCategory === (cat.id || cat._id)
                             ? 'bg-white text-blue-600 shadow-lg'
                             : 'bg-white/20 text-white hover:bg-white/30'
                         }`}
@@ -1815,13 +1857,34 @@ export default function AdminOrdersPage() {
                   <>
                     {/* 🍕 SOL: ÜRÜN GRİD */}
                     <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+                      {/* 🐛 DEBUG: Filtreleme bilgisi */}
+                      {selectedCategory !== 'all' && (
+                        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+                          <span className="font-semibold text-blue-900">Filtre Aktif:</span>
+                          <span className="ml-2 text-blue-700">
+                            {categories.find(c => (c.id || c._id) === selectedCategory)?.name || 'Bilinmeyen'}
+                          </span>
+                          <span className="ml-2 text-gray-500">
+                            (ID: {selectedCategory})
+                          </span>
+                          <span className="ml-2 text-blue-700">
+                            • Bulunan: {menuItems.filter(item => 
+                              item.categoryId === selectedCategory || item.subcategoryId === selectedCategory
+                            ).length} ürün
+                          </span>
+                        </div>
+                      )}
+                      
                       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                         {menuItems
                           .filter(item => {
                             const matchesSearch = !menuSearchTerm || 
                               item.name.toLowerCase().includes(menuSearchTerm.toLowerCase()) ||
                               item.description?.toLowerCase().includes(menuSearchTerm.toLowerCase())
-                            const matchesCategory = selectedCategory === 'all' || item.categoryId === selectedCategory
+                            // ✅ FIX: Alt kategori desteği
+                            const matchesCategory = selectedCategory === 'all' || 
+                              item.categoryId === selectedCategory || 
+                              item.subcategoryId === selectedCategory
                             return matchesSearch && matchesCategory
                           })
                           .map((item) => (
@@ -1884,7 +1947,9 @@ export default function AdminOrdersPage() {
                         const matchesSearch = !menuSearchTerm || 
                           item.name.toLowerCase().includes(menuSearchTerm.toLowerCase()) ||
                           item.description?.toLowerCase().includes(menuSearchTerm.toLowerCase())
-                        const matchesCategory = selectedCategory === 'all' || item.categoryId === selectedCategory
+                        const matchesCategory = selectedCategory === 'all' || 
+                          item.categoryId === selectedCategory || 
+                          item.subcategoryId === selectedCategory
                         return matchesSearch && matchesCategory
                       }).length === 0 && (
                         <div className="text-center py-12 text-gray-500">
@@ -2082,7 +2147,9 @@ export default function AdminOrdersPage() {
                         const matchesSearch = !menuSearchTerm || 
                           item.name.toLowerCase().includes(menuSearchTerm.toLowerCase()) ||
                           item.description?.toLowerCase().includes(menuSearchTerm.toLowerCase())
-                        const matchesCategory = selectedCategory === 'all' || item.categoryId === selectedCategory
+                        const matchesCategory = selectedCategory === 'all' || 
+                          item.categoryId === selectedCategory || 
+                          item.subcategoryId === selectedCategory
                         return matchesSearch && matchesCategory
                       }).length}
                     </span>
